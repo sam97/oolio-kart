@@ -1,0 +1,72 @@
+$fontFamily: "Red Hat Text", sans-serif;
+$txtFamily: "Inter", sans-serif;
+
+:root {
+  --foreground-rgb: 0, 0, 0;
+  --background-start-rgb: 214, 219, 220;
+  --background-end-rgb: 255, 255, 255;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --foreground-rgb: 255, 255, 255;
+    --background-start-rgb: 0, 0, 0;
+    --background-end-rgb: 0, 0, 0;
+  }
+}
+
+body {
+  font-family: $fontFamily;
+  color: rgb(var(--foreground-rgb));
+}
+
+h1 {
+  font-family: $fontFamily;
+  font-size: 40px !important;
+  font-weight: 600;
+  color: #3f2d28;
+}
+
+h2 {
+  font-family: $fontFamily;
+  font-size: 24px;
+  font-weight: 600;
+  color: #c66c50;
+}
+
+h3 {
+  font-family: $fontFamily;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+p {
+  font-family: $txtFamily;
+  font-weight: 600;
+  font-size: 16px;
+  color: #77706d;
+}
+
+p.modalTitle {
+  font-size: 40px;
+  color: #2f1d19;
+}
+
+p.label {
+  font-size: 12px;
+  color: #aca09c;
+}
+
+p.title {
+  font-size: 14px;
+  color: #6e6461;
+}
+
+p.txt {
+  font-size: 13px;
+}
+
+p.total {
+  font-size: 22px;
+  color: #483a37;
+}

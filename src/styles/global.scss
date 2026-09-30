@@ -1,0 +1,41 @@
+$primary: "#C73B0E";
+$secondary: "#B65335";
+
+body {
+  padding: 90px 115px;
+  min-height: 100vh;
+  height: 100%;
+  background-color: #fbf8f5;
+  //   overflow-x: hidden;
+  // Mobile Screen
+  //   @media (min-width: 375px) {
+  //     padding: 15px 20px;
+  //   }
+}
+
+button {
+  width: auto;
+  background: $primary;
+  color: #e7ab91;
+  border-radius: 50px;
+  font-size: 14px;
+  transition: 0.7s;
+  padding: 10px;
+  font-weight: 600;
+  background: rgb(0, 0, 0);
+  background: linear-gradient(
+    162deg,
+    rgba(0, 0, 0, 1) 0%,
+    $primary 0%,
+    $secondary 100%
+  );
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
