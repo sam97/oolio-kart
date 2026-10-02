@@ -51,3 +51,10 @@ data/coupons/*
 
 # Personal scratch work
 .scratch/
+
+# Optional local copies of the gzipped coupon files for docker compose (see README)
+data/seed/*
+!data/seed/.gitkeep
+
+# Local docker compose settings
+.env

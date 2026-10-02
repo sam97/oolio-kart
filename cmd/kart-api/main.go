@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/sam97/oolio-kart/internal/cache"
 	"github.com/sam97/oolio-kart/internal/config"
 	"github.com/sam97/oolio-kart/internal/couponclient"
+	"github.com/sam97/oolio-kart/internal/healthcheck"
 	"github.com/sam97/oolio-kart/internal/httpapi"
 	"github.com/sam97/oolio-kart/internal/logging"
 	"github.com/sam97/oolio-kart/internal/order"
@@ -23,13 +25,30 @@ import (
 )
 
 func main() {
+	probe := flag.Bool("healthcheck", false, "check that the running server is ready, then exit")
+	flag.Parse()
+
+	run := serve
+	if *probe {
+		run = checkHealth
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "kart-api:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+// checkHealth probes the server configured by the environment. It is the
+// container health check, since the image has no shell or curl.
+func checkHealth() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	return healthcheck.Probe(cfg.Addr)
+}
+
+func serve() error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)

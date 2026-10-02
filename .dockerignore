@@ -1,0 +1,10 @@
+# The image only needs go.mod, go.sum, api/, cmd/ and internal/. data/ alone
+# holds several GB of coupon files that must never enter the build context.
+data
+.scratch
+.git
+.claude
+.env
+*.md
+**/*_test.go
+**/*.exe

@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"github.com/labstack/echo/v5"
 	"github.com/sam97/oolio-kart/internal/coupons"
 	"github.com/sam97/oolio-kart/internal/couponsapi"
+	"github.com/sam97/oolio-kart/internal/healthcheck"
 	"github.com/spf13/viper"
 )
 
@@ -46,10 +48,27 @@ var defaults = map[string]string{
 }
 
 func main() {
+	probe := flag.Bool("healthcheck", false, "check that the running server is ready, then exit")
+	flag.Parse()
+
+	run := serve
+	if *probe {
+		run = checkHealth
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "coupons-server:", err)
 		os.Exit(1)
 	}
+}
+
+// checkHealth probes the server configured by the environment. It is the
+// container health check, since the image has no shell or curl.
+func checkHealth() error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	return healthcheck.Probe(cfg.Addr)
 }
 
 func loadConfig() (config, error) {
@@ -91,7 +110,7 @@ func newLogger(out io.Writer, cfg config) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(out, opts))
 }
 
-func run() error {
+func serve() error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)

@@ -8,7 +8,25 @@ client ──► kart-api :8080 ──HTTP──► coupons-server :8081 ──�
               └─ in-memory products & orders (dummy stores)
 ```
 
-## Run
+## Run with Docker
+
+```sh
+docker compose up -d --build
+```
+
+This starts three containers:
+- **`coupon-data`** runs once. It fills the `coupons` volume with `couponbase1.gz`, `couponbase2.gz` and `couponbase3.gz`, about 2.1 GB in total, and verifies each one.
+  - By default it downloads them from S3.
+  - To use copies you already have, put them in `data/seed/`, or set `COUPONS_SEED_DIR` in a `.env` file to the folder that holds them, for example `COUPONS_SEED_DIR=C:/Users/me/Downloads`.
+  - Files already in the volume are kept.
+- **`kart-api`** is published on port 8080. It does not wait for the coupons server: it answers straight away, and orders without a coupon work while coupons are loading or down.
+- **`coupons-server`** is reachable only from `kart-api`.
+  - The first start builds the codes from the gzip files, which takes about 30 s and peaks near 3 GB. It runs under a 4 GB memory limit, so Docker needs at least 6 GB of memory.
+  - Later starts restore the saved codes from the volume and are ready in a few seconds.
+
+Both images are distroless, run as non-root and have read-only root filesystems. The containers' health checks run the binary itself with `-healthcheck`, which GETs `/ready`. `docker compose down -v` also deletes the coupons volume, so the next start copies or downloads the files again.
+
+## Run without Docker
 
 From the repository root, with `couponbase1.txt`, `couponbase2.txt` and `couponbase3.txt` in `data/coupons/`:
 
@@ -104,7 +122,12 @@ internal/money          integer cents
 internal/logging        slog setup, request id in every log line
 internal/coupons        loads the coupon base files and keeps the valid codes in sync
 internal/couponsapi     coupons server HTTP handlers
-data/coupons/           coupon base files (gitignored)
+internal/healthcheck    the -healthcheck probe used by the container health checks
+data/coupons/           coupon base files for running without Docker (gitignored)
+data/seed/              optional local .gz copies for docker compose (gitignored)
+scripts/                fetch-coupons.sh, run by the coupon-data container
+Dockerfile              one image per binary, chosen with --build-arg CMD
+docker-compose.yml      coupon-data, coupons-server, kart-api
 ```
 
 ## Scaling out
