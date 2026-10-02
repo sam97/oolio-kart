@@ -13,9 +13,11 @@ client ──► kart-api :8080 ──HTTP──► coupons-server :8081 ──�
 From the repository root, with `couponbase1.txt`, `couponbase2.txt` and `couponbase3.txt` in `data/coupons/`:
 
 ```sh
-go run ./cmd/coupons-server   # ready after ~18s and ~3 GB peak memory; see /ready
+go run ./cmd/coupons-server   # first start: ready after ~18s and ~3 GB peak memory; see /ready
 go run ./cmd/kart-api
 ```
+
+After a successful load the coupons server saves the valid codes to `.valid-codes.json` in the coupon folder. A restart with the same files (same names, sizes and modification times) restores them and is ready immediately. Any change to the files triggers a full rebuild, and a missing or corrupt saved file is ignored.
 
 ```sh
 curl localhost:8080/api/product
@@ -80,7 +82,7 @@ Coupons server:
 | Variable | Default |
 |---|---|
 | `COUPONS_ADDR` | `127.0.0.1:8081` (use `:8081` in a container; never expose it publicly) |
-| `COUPONS_DIR` | `data/coupons` (keep either the `.txt` or the `.gz` files there, never both) |
+| `COUPONS_DIR` | `data/coupons` (keep either the `.txt` or the `.gz` files there, never both. If it is read-only, saving the codes is skipped with a warning) |
 | `COUPONS_POLL_INTERVAL` | `2s` |
 | `COUPONS_DISCOUNT_PERCENT` | `10` |
 | `LOG_LEVEL`, `LOG_FORMAT`, `SHUTDOWN_TIMEOUT` | `info`, `json`, `10s` |

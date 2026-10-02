@@ -38,6 +38,10 @@ type LoadResult struct {
 	Codes    int
 	Duration time.Duration
 	Err      error
+
+	// Restored is true when the codes were read from the saved result of an
+	// earlier run instead of being built from the files.
+	Restored bool
 }
 
 // Service keeps the list of valid coupons in sync with a watched folder.
@@ -76,11 +80,19 @@ func (s *Service) IsValid(code string) bool {
 // Run watches the folder and reloads the coupons whenever its contents change,
 // until ctx is cancelled. A failed load keeps the previous coupons and is
 // retried on the next change.
+//
+// On start, if the folder is unchanged since the last successful load, the
+// saved result of that load is used right away instead of rebuilding.
 func (s *Service) Run(ctx context.Context) error {
 	t := time.NewTicker(s.cfg.PollInterval)
 	defer t.Stop()
 
 	var prev, loaded snapshot
+	// Files that match the saved result were complete when it was written, so
+	// they need not be seen twice before they are trusted.
+	if cur, err := scan(s.cfg.Dir); err == nil && s.restore(cur) {
+		prev, loaded = cur, cur
+	}
 	for {
 		cur, err := scan(s.cfg.Dir)
 		if err != nil {
@@ -112,6 +124,9 @@ func (s *Service) load(snap snapshot) {
 		s.codes = codes
 		s.mu.Unlock()
 		s.cfg.Logger.Info("loaded coupons", "files", len(files), "codes", len(codes), "took", res.Duration)
+		if err := writeSaved(s.cfg.Dir, newSavedCodes(snap, codes)); err != nil {
+			s.cfg.Logger.Warn("save coupons", "file", SavedName, "err", err)
+		}
 	}
 	// A load allocates several GB that is garbage once it returns; give it
 	// back to the OS instead of holding it until the next load.

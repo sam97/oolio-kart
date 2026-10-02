@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"maps"
 	"math"
 	"math/rand/v2"
 	"os"
@@ -182,8 +183,9 @@ func TestServiceReloadsOnChange(t *testing.T) {
 	}
 }
 
-// TestBaseFiles loads the real coupon base files from COUPONS_DIR, or the
-// repository's data/coupons, and prints the valid coupons. Run it with:
+// TestBaseFiles builds the valid coupons from the real coupon base files in
+// COUPONS_DIR, or the repository's data/coupons, and prints them. It calls
+// Build directly so it never reads a saved result. Run it with:
 // go test -v -run TestBaseFiles ./internal/coupons
 func TestBaseFiles(t *testing.T) {
 	if testing.Short() {
@@ -193,19 +195,18 @@ func TestBaseFiles(t *testing.T) {
 	if dir == "" {
 		dir = filepath.Join("..", "..", "data", "coupons")
 	}
-	if snap, err := scan(dir); err != nil || len(snap) < 3 {
+	snap, err := scan(dir)
+	if err != nil || len(snap) < 3 {
 		t.Skipf("copy couponbase1.txt, couponbase2.txt and couponbase3.txt into %s/ to run this test", dir)
 	}
 
-	loads := make(chan LoadResult, 1)
-	s := New(Config{Dir: dir, PollInterval: 100 * time.Millisecond, OnLoad: func(r LoadResult) { loads <- r }})
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go s.Run(ctx)
-
-	res := waitLoad(t, loads)
-	codes := s.ValidCoupons()
-	t.Logf("%d valid coupons from %d files in %s:", len(codes), len(res.Files), res.Duration.Round(time.Millisecond))
+	files := slices.Sorted(maps.Keys(snap))
+	start := time.Now()
+	codes, err := Build(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%d valid coupons from %d files in %s:", len(codes), len(files), time.Since(start).Round(time.Millisecond))
 	for _, c := range codes {
 		t.Log("  " + c)
 	}
@@ -215,7 +216,7 @@ func TestBaseFiles(t *testing.T) {
 		t.Errorf("valid coupons = %v, want %v", codes, want)
 	}
 	for _, c := range []string{"SUPER100", "MOODYHRS", "HAPPYHOURS", "BUYGETONE"} {
-		if s.IsValid(c) {
+		if slices.Contains(codes, c) {
 			t.Errorf("%s should be invalid", c)
 		}
 	}
