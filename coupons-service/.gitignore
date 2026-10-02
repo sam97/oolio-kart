@@ -1,3 +1,0 @@
-# Coupon base files (~1 GB each) live here locally; never commit them.
-data/*
-!data/.gitkeep

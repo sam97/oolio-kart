@@ -44,3 +44,10 @@ go.work
 .ionide
 
 # End of https://www.toptal.com/developers/gitignore/api/go,visualstudiocode
+
+# Coupon base files (~1 GB each) live here locally; never commit them.
+data/coupons/*
+!data/coupons/.gitkeep
+
+# Personal scratch work
+.scratch/
