@@ -10,6 +10,24 @@ They are separate processes because their needs are very different. Building the
 - either service can be redeployed or scaled on its own
 - if coupons are down, orders without a coupon still work
 
+## Contents
+
+- [Diagram](#diagram)
+- [Coupons](#coupons)
+  - [The rule](#the-rule)
+  - [What the data looks like](#what-the-data-looks-like)
+  - [How the valid set is built](#how-the-valid-set-is-built-internalcoupons)
+  - [How coupons are served](#how-coupons-are-served-internalcouponsservicego-internalcouponsapi)
+  - [How kart-api uses it](#how-kart-api-uses-it-internalcouponclient)
+  - [When things fail](#when-things-fail)
+- [Decisions](#decisions)
+  - [Made for production](#made-for-production)
+  - [Made only for this assignment](#made-only-for-this-assignment)
+- [API notes](#api-notes)
+- [Configuration](#configuration)
+- [Where things are](#where-things-are)
+- [Future scope](#future-scope)
+
 ## Diagram
 
 ```mermaid
