@@ -1,6 +1,6 @@
 # Oolio Kart API
 
-[![CI](https://github.com/sam97/oolio-kart/actions/workflows/ci.yml/badge.svg?branch=advanced-challenge)](https://github.com/sam97/oolio-kart/actions/workflows/ci.yml)
+[![CI](https://github.com/sam97/oolio-kart/actions/workflows/ci.yml/badge.svg)](https://github.com/sam97/oolio-kart/actions/workflows/ci.yml)
 
 > **About AI assistance:** I used Claude while building this project. I have reviewed the code and take full responsibility for it.
 
