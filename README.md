@@ -1,5 +1,7 @@
 # Oolio Kart API
 
+[![CI](https://github.com/sam97/oolio-kart/actions/workflows/ci.yml/badge.svg?branch=advanced-challenge)](https://github.com/sam97/oolio-kart/actions/workflows/ci.yml)
+
 > **About AI assistance:** I used Claude while building this project. I have reviewed the code and take full responsibility for it.
 
 ## The assignment
@@ -20,20 +22,25 @@ A Go implementation of the Oolio food-ordering API ([api/openapi.yaml](api/opena
 
 For the design, how coupons are computed, and other technical decisions please see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
-## System requirements
+<details>
+  <summary>System requirements</summary>
+    
+  ## System requirements
+  
+  **With Docker (recommended)**
+  - Docker Engine 25 or later with Compose v2 (Docker Desktop 4.27 or later).
+  - At least **6 GB of memory** available to Docker. The coupons server's first build peaks near 3 GB and runs under a 4 GB limit. On Docker Desktop, set this under Settings → Resources.
+  - About 3 GB of free disk for the coupon files (2.1 GB of `.gz`) and the images (about 40 MB).
+  - Internet access on the first run: the stack downloads 2.1 GB of coupon files, which took about 5 minutes when tested. See [Using local copies](#using-local-copies-of-the-coupon-files) to skip this.
+  - Port 8080 free.
+  
+  **Without Docker**
+  - Go 1.27.1 or later.
+  - About 3 GB of free memory for the coupons server's first build.
+  - The three coupon files, either as `.gz` (2.1 GB) or unzipped as `.txt` (3.1 GB).
+  - Ports 8080 and 8081 free.
 
-**With Docker (recommended)**
-- Docker Engine 25 or later with Compose v2 (Docker Desktop 4.27 or later).
-- At least **6 GB of memory** available to Docker. The coupons server's first build peaks near 3 GB and runs under a 4 GB limit. On Docker Desktop, set this under Settings → Resources.
-- About 3 GB of free disk for the coupon files (2.1 GB of `.gz`) and the images (about 40 MB).
-- Internet access on the first run: the stack downloads 2.1 GB of coupon files, which took about 5 minutes when tested. See [Using local copies](#using-local-copies-of-the-coupon-files) to skip this.
-- Port 8080 free.
-
-**Without Docker**
-- Go 1.27.1 or later.
-- About 3 GB of free memory for the coupons server's first build.
-- The three coupon files, either as `.gz` (2.1 GB) or unzipped as `.txt` (3.1 GB).
-- Ports 8080 and 8081 free.
+</details>
 
 ## Run with Docker
 
@@ -49,13 +56,15 @@ This starts three containers:
 Later starts reuse the volume. coupons-server restores its saved results and is ready in a few seconds.
 
 <details>
-<summary>Docker commands</summary>
-```sh
-docker compose ps                         # both services show "healthy" when ready
-docker compose logs -f coupons-server     # watch the first build
-docker compose down                       # stop; keeps the coupon volume
-docker compose down -v                    # stop and delete the coupon volume
-```
+  <summary>Docker commands</summary>
+  
+  ```sh
+  docker compose ps                         # both services show "healthy" when ready
+  docker compose logs -f coupons-server     # watch the first build
+  docker compose down                       # stop; keeps the coupon volume
+  docker compose down -v                    # stop and delete the coupon volume
+  ```
+
 </details>
 
 ### Using local copies of the coupon files
