@@ -61,3 +61,8 @@ data/seed/*
 
 # Local docker compose settings
 .env
+
+# Manim virtualenv and render cache for docs/animations
+docs/animations/.venv/
+docs/animations/media/
+docs/animations/__pycache__/
