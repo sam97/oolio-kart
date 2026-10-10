@@ -69,7 +69,8 @@ type Result struct {
 }
 
 type Job struct {
-	cfg Config
+	cfg   Config
+	close func() error // releases what NewDefault opened for the scanner
 }
 
 func New(cfg Config) *Job {
@@ -77,6 +78,14 @@ func New(cfg Config) *Job {
 		cfg.Logger = slog.Default()
 	}
 	return &Job{cfg: cfg}
+}
+
+// Close releases the scanner's connections, if it has any.
+func (j *Job) Close() error {
+	if j.close == nil {
+		return nil
+	}
+	return j.close()
 }
 
 // Run runs a build now and then at each time schedule gives, until ctx is
@@ -195,9 +204,10 @@ func (j *Job) log(ctx context.Context, result Result, err error) {
 	case errors.Is(err, context.Canceled) && ctx.Err() != nil:
 		logger.Info("coupon build interrupted; nothing was published")
 	case err != nil:
-		logger.Error("build coupons", "files", result.Files, "err", err)
+		logger.Error("build coupons", "scanner", result.Scan.Scanner, "files", result.Files, "err", err)
 	case result.Outcome == Built:
 		logger.Info("built coupons",
+			"scanner", result.Scan.Scanner,
 			"files", len(result.Files),
 			"codes", result.Codes,
 			"took", result.Duration,

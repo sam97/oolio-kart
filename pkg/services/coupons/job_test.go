@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime/debug"
 	"runtime/metrics"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,6 +26,7 @@ import (
 	"github.com/sam97/oolio-kart/pkg/models"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/codec"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner"
+	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner/clickhouse"
 )
 
 // memoryStore is a couponstore.Store and couponstore.Settings in memory.
@@ -117,20 +120,28 @@ func (l *memoryLock) TryLock(context.Context) (func(), bool, error) {
 	return func() { l.held = false }, true, nil
 }
 
-func newJob(t *testing.T, dir string, store *memoryStore) *Job {
-	t.Helper()
-	job, err := NewDefault(Options{
+// jobOptions are the default pipeline's options for files in dir, published
+// to store, with every scanner configured.
+func jobOptions(t *testing.T, dir string, store *memoryStore) Options {
+	return Options{
 		Files:       datasources.CouponFiles(dir),
 		BucketDir:   t.TempDir(),
+		ClickHouse:  ClickHouseOptions{URL: "clickhouse://localhost:9000/coupons", Dir: "coupons"},
 		MemoryLimit: MinMemoryLimit,
 		Store:       store,
 		Settings:    store,
 		Locker:      &memoryLock{},
 		Logger:      slog.New(slog.DiscardHandler),
-	})
+	}
+}
+
+func newJob(t *testing.T, dir string, store *memoryStore) *Job {
+	t.Helper()
+	job, err := NewDefault(jobOptions(t, dir, store))
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { job.Close() })
 	return job
 }
 
@@ -256,6 +267,68 @@ func TestJobAbortsFailedScan(t *testing.T) {
 	}
 	if _, found, _ := store.Published(t.Context()); found || store.aborted != 1 {
 		t.Errorf("published %v, aborted %d; want nothing published and one abort", found, store.aborted)
+	}
+}
+
+func TestJobRebuildsWhenScannerChanges(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.txt", "HAPPYHRS\nFIFTYOFF\n")
+	writeFile(t, dir, "b.txt", "HAPPYHRS\n")
+	store := newMemoryStore()
+	job := newJob(t, dir, store)
+	runOnce(t, job, Built)
+	runOnce(t, job, Unchanged)
+
+	// Another scanner finds the same codes, but its builds are compared, so
+	// switching to it rebuilds.
+	bucketsFor := job.cfg.ScannerFor
+	job.cfg.ScannerFor = func(settings models.CouponSettings) (scanner.Scanner, string, error) {
+		scan, _, err := bucketsFor(settings)
+		return scan, Rules(settings, "other"), err
+	}
+	runOnce(t, job, Built)
+	runOnce(t, job, Unchanged)
+}
+
+func TestNewDefaultScanners(t *testing.T) {
+	store := newMemoryStore()
+	settings, _ := store.Settings(t.Context())
+	tests := map[string]struct {
+		want     scanner.Scanner
+		wantName string
+	}{
+		"":           {&scanner.Buckets{}, "go"},
+		"go":         {&scanner.Buckets{}, "go"},
+		"clickhouse": {&clickhouse.Scanner{}, "clickhouse"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			opts := jobOptions(t, t.TempDir(), store)
+			opts.Scanner = name
+			job, err := NewDefault(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer job.Close()
+
+			// The ClickHouse connection is lazy, so no server is needed.
+			scan, rules, err := job.cfg.ScannerFor(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := reflect.TypeOf(scan), reflect.TypeOf(test.want); got != want {
+				t.Errorf("scanner is a %v, want %v", got, want)
+			}
+			if want := ";scanner=" + test.wantName; !strings.HasSuffix(rules, want) {
+				t.Errorf("rules %q do not end in %q", rules, want)
+			}
+		})
+	}
+
+	opts := jobOptions(t, t.TempDir(), store)
+	opts.Scanner = "duckdb"
+	if _, err := NewDefault(opts); err == nil {
+		t.Error("NewDefault accepted an unknown scanner")
 	}
 }
 

@@ -64,7 +64,9 @@ func build(once bool) error {
 	defer stores.Close()
 	job, err := coupons.NewDefault(coupons.Options{
 		Files:       datasources.CouponFiles(cfg.Dir),
+		Scanner:     cfg.Scanner,
 		BucketDir:   cfg.BucketDir,
+		ClickHouse:  coupons.ClickHouseOptions{URL: cfg.ClickHouseURL, Dir: cfg.ClickHouseDir},
 		MemoryLimit: int64(cfg.MemoryLimit),
 		Store:       stores.Coupons,
 		Settings:    stores.CouponSettings,
@@ -74,12 +76,13 @@ func build(once bool) error {
 	if err != nil {
 		return err
 	}
+	defer job.Close()
 
 	if once {
 		_, err := job.RunOnce(ctx)
 		return err
 	}
-	logger.Info("starting", "dir", cfg.Dir, "schedule", cfg.Schedule.String())
+	logger.Info("starting", "dir", cfg.Dir, "scanner", cfg.Scanner, "schedule", cfg.Schedule.String())
 	if err := job.Run(ctx, cfg.Schedule); !errors.Is(err, context.Canceled) {
 		return err
 	}

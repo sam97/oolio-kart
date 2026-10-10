@@ -52,8 +52,49 @@ services:
       - ${COUPONS_SEED_DIR:-./data/seed}:/seed:ro
       - coupons:/data
 
+  # Scratch space for the clickhouse scanner, started only with
+  # COMPOSE_PROFILES=clickhouse. It reads the coupon files from the coupons
+  # volume itself; coupons-job creates and drops its table on each build.
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.9
+    profiles: [clickhouse]
+    depends_on:
+      coupon-data:
+        condition: service_completed_successfully
+    # Local development credentials only; please use secrets elsewhere.
+    environment:
+      CLICKHOUSE_DB: coupons
+      CLICKHOUSE_USER: kart
+      CLICKHOUSE_PASSWORD: kart
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 0
+      # Otherwise the entrypoint tries to chown the read-only coupons mount,
+      # logging an error per file. The image's own folders already belong to
+      # the clickhouse user.
+      CLICKHOUSE_DO_NOT_CHOWN: 1
+    volumes:
+      # file() only reads from user_files.
+      - coupons:/var/lib/clickhouse/user_files/coupons:ro
+      - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    # No mem_limit: the scan's memory is capped per query, and in tests a
+    # hard cgroup limit of 2 GB or less slowed the same scan from ~10s to
+    # ~150s.
+    expose:
+      - "9000"
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user", "kart", "--password", "kart", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+      start_interval: 1s
+    restart: unless-stopped
+
   # Builds the valid coupons on start, then on COUPONS_SCHEDULE whenever the
   # files or rules have changed, and publishes them to Postgres.
+  #   COUPONS_SCANNER=clickhouse COMPOSE_PROFILES=clickhouse docker compose up
+  # switches it from the default go scanner to ClickHouse.
   coupons-job:
     build:
       context: .
@@ -65,6 +106,10 @@ services:
         condition: service_completed_successfully
       coupon-data:
         condition: service_completed_successfully
+      # Ignored unless the clickhouse profile is on.
+      clickhouse:
+        condition: service_healthy
+        required: false
     # Optional staging/production overrides: ENV_FILE=staging.env docker compose up
     env_file:
       - path: ${ENV_FILE:-.env.none}
@@ -72,9 +117,13 @@ services:
     environment:
       DATABASE_URL: postgres://kart:kart@postgres:5432/kart?sslmode=disable
       COUPONS_DIR: /data
+      COUPONS_SCANNER: ${COUPONS_SCANNER:-go}
       # Hidden from the coupon file listing; the container is read-only, so
       # bucket files live in the coupons volume.
       COUPONS_BUCKET_DIR: /data/.buckets
+      CLICKHOUSE_URL: clickhouse://kart:kart@clickhouse:9000/coupons
+      # /data as the clickhouse service sees it, under its user_files.
+      COUPONS_CLICKHOUSE_DIR: coupons
       COUPONS_MEMORY_LIMIT: 256MiB
     volumes:
       - coupons:/data
@@ -136,3 +185,4 @@ services:
 volumes:
   coupons:
   pgdata:
+  clickhouse-data:

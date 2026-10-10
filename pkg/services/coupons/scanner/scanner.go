@@ -20,8 +20,13 @@ type Scanner interface {
 	Scan(ctx context.Context, reader couponsource.Reader, sources []couponsource.Source, out couponstore.Batch) (Stats, error)
 }
 
-// Stats describes one scan.
+// Stats describes one scan. Scanners other than Buckets fill in only the
+// fields that apply to them, and use Scatter and Count for their first and
+// second phases.
 type Stats struct {
+	// Scanner names the scanner that ran, as COUPONS_SCANNER does.
+	Scanner string
+
 	Buckets       int
 	EncodeWorkers int
 	CountWorkers  int
@@ -35,8 +40,8 @@ type Stats struct {
 	Oversized int
 
 	Codes   int
-	Scatter time.Duration
-	Count   time.Duration
+	Scatter time.Duration // first phase
+	Count   time.Duration // second phase
 
 	// Layout describes the bucket files left on disk.
 	Layout couponstore.Layout `json:"-"`
@@ -50,6 +55,10 @@ type Budget struct {
 	Buckets  int64 // write buffers, one per (source, bucket)
 	Count    int64 // one slot per count worker
 }
+
+// BucketsName is how COUPONS_SCANNER and the build rules refer to the Buckets
+// scanner.
+const BucketsName = "go"
 
 type BucketOptions struct {
 	Codec    codec.Codec
@@ -99,14 +108,15 @@ func (b *Buckets) UseHashFunction(name string, hash func(uint64) uint64) {
 
 func (b *Buckets) Scan(ctx context.Context, reader couponsource.Reader, sources []couponsource.Source, out couponstore.Batch) (Stats, error) {
 	if err := wipe(b.opts.Dir); err != nil {
-		return Stats{}, err
+		return Stats{Scanner: BucketsName}, err
 	}
 	if len(sources) == 0 {
-		return Stats{}, nil
+		return Stats{Scanner: BucketsName}, nil
 	}
 
 	plan := newPlan(b.opts.Budget, b.opts.Codec.MinLength(), reader.ChunkSize(len(sources)), sources)
 	stats := Stats{
+		Scanner:       BucketsName,
 		Buckets:       plan.buckets,
 		EncodeWorkers: plan.encoders,
 		CountWorkers:  plan.countWorkers,

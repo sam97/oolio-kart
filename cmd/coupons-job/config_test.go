@@ -44,7 +44,7 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Date(2026, 10, 10, 9, 0, 30, 0, time.UTC)
-	if cfg.Dir != "data/coupons" || cfg.BucketDir != "data/buckets" || cfg.MemoryLimit != 256<<20 ||
+	if cfg.Dir != "data/coupons" || cfg.Scanner != "go" || cfg.BucketDir != "data/buckets" || cfg.MemoryLimit != 256<<20 ||
 		cfg.LogLevel != slog.LevelInfo || cfg.DatabaseURL == "" || cfg.Schedule.Next(start) != start.Add(time.Minute) {
 		t.Errorf("unexpected defaults: %+v", cfg)
 	}
@@ -59,6 +59,16 @@ func TestLoadConfig(t *testing.T) {
 	if cfg.LogLevel != slog.LevelDebug || cfg.MemoryLimit != 1<<30 {
 		t.Errorf("unexpected overrides: %+v", cfg)
 	}
+
+	for _, name := range []string{"clickhouse"} {
+		cfg, err = loadFrom(t, map[string]string{"COUPONS_SCANNER": name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Scanner != name || cfg.ClickHouseURL == "" || cfg.ClickHouseDir == "" {
+			t.Errorf("unexpected %s config: %+v", name, cfg)
+		}
+	}
 }
 
 func TestLoadConfigInvalid(t *testing.T) {
@@ -68,6 +78,7 @@ func TestLoadConfigInvalid(t *testing.T) {
 		"bad schedule":     {"COUPONS_SCHEDULE": "every so often"},
 		"memory too small": {"COUPONS_MEMORY_LIMIT": "16MiB"},
 		"bad memory":       {"COUPONS_MEMORY_LIMIT": "plenty"},
+		"unknown scanner":  {"COUPONS_SCANNER": "duckdb"},
 	}
 	for name, vars := range tests {
 		t.Run(name, func(t *testing.T) {

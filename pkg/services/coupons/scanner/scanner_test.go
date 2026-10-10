@@ -11,34 +11,19 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/sam97/oolio-kart/pkg/datasources/couponsource"
-	"github.com/sam97/oolio-kart/pkg/datasources/couponstore"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/codec"
+	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner/scannertest"
 )
 
 // memSource is a source held in memory.
-type memSource struct {
-	name string
-	data string
+func memSource(name, data string) scannertest.File {
+	return scannertest.File{Name: name, Data: data}
 }
 
-func (m memSource) Info() couponsource.Info {
-	return couponsource.Info{Name: m.name, Size: int64(len(m.data)), ModTime: time.Unix(1, 0)}
-}
-func (m memSource) Open() (io.ReadSeekCloser, error) {
-	return nopCloser{strings.NewReader(m.data)}, nil
-}
-func (m memSource) EstimatedSize() int64 { return int64(len(m.data)) }
-
-type nopCloser struct{ io.ReadSeeker }
-
-func (nopCloser) Close() error { return nil }
-
-// memReader sends each memSource in chunks of a few lines, so chunks from
+// memReader sends each scannertest.File in chunks of a few lines, so chunks from
 // different sources interleave.
 type memReader struct{ sources []couponsource.Source }
 
@@ -47,7 +32,7 @@ func (r memReader) ChunkSize(sources int) int                               { re
 
 func (r memReader) Read(ctx context.Context, sources []couponsource.Source, out chan<- couponsource.Chunk) error {
 	for i, source := range sources {
-		lines := strings.SplitAfter(source.(memSource).data, "\n")
+		lines := strings.SplitAfter(source.(scannertest.File).Data, "\n")
 		for len(lines) > 0 {
 			n := min(len(lines), 7)
 			select {
@@ -60,23 +45,6 @@ func (r memReader) Read(ctx context.Context, sources []couponsource.Source, out 
 	}
 	return nil
 }
-
-// collected is a couponstore.Batch that keeps codes in memory.
-type collected struct {
-	mu    sync.Mutex
-	codes []string
-}
-
-func (c *collected) Add(code string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.codes = append(c.codes, code)
-	return nil
-}
-
-func (c *collected) Abort() {}
-
-func (c *collected) Commit(context.Context, couponstore.Manifest) error { return nil }
 
 var defaultBudget = Budget{Encoders: 4 << 20, Buckets: 4 << 20, Count: 16 << 20}
 
@@ -95,21 +63,21 @@ func newScanner(t *testing.T, minFiles int, budget Budget) *Buckets {
 
 func scan(t *testing.T, b *Buckets, sources ...couponsource.Source) ([]string, Stats) {
 	t.Helper()
-	var out collected
+	var out scannertest.Collected
 	stats, err := b.Scan(t.Context(), memReader{sources}, sources, &out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	slices.Sort(out.codes)
-	return out.codes, stats
+	slices.Sort(out.Codes)
+	return out.Codes, stats
 }
 
 func TestScan(t *testing.T) {
 	b := newScanner(t, 2, defaultBudget)
 	got, _ := scan(t, b,
-		memSource{"a", "HAPPYHRS\nSUPER100\nSUPER100\nSHORT77\nTOOLONGCODE1\nBOTHAB01\n"},
-		memSource{"b", "HAPPYHRS\r\nBOTHAB01\r\nTENCHARS10\r\n"},
-		memSource{"c", "TENCHARS10\nHAPPYHRS\nSHORT77\nTOOLONGCODE1\nONLYINC1"},
+		memSource("a", "HAPPYHRS\nSUPER100\nSUPER100\nSHORT77\nTOOLONGCODE1\nBOTHAB01\n"),
+		memSource("b", "HAPPYHRS\r\nBOTHAB01\r\nTENCHARS10\r\n"),
+		memSource("c", "TENCHARS10\nHAPPYHRS\nSHORT77\nTOOLONGCODE1\nONLYINC1"),
 	)
 	if want := []string{"BOTHAB01", "HAPPYHRS", "TENCHARS10"}; !slices.Equal(got, want) {
 		t.Errorf("Scan = %v, want %v", got, want)
@@ -134,7 +102,7 @@ func TestScanMatchesMapCount(t *testing.T) {
 	}
 	rng := rand.New(rand.NewPCG(1, 2))
 	for round := range 10 {
-		sources, counts := randomSources(rng, 2+rng.IntN(5))
+		sources, counts := scannertest.RandomSources(rng, 2+rng.IntN(5))
 		for _, config := range configs {
 			t.Run(fmt.Sprintf("round%d/%s", round, config.name), func(t *testing.T) {
 				b := newScanner(t, config.minFiles, config.budget)
@@ -166,9 +134,9 @@ func TestScanRepeatedCode(t *testing.T) {
 	repeated := strings.Repeat("REPEATED\n", 20_000)
 	b := newScanner(t, 2, Budget{Encoders: 1, Buckets: 1, Count: 8 << 10})
 	got, stats := scan(t, b,
-		memSource{"a", repeated + "HAPPYHRS\n"},
-		memSource{"b", repeated},
-		memSource{"c", "HAPPYHRS\nSUPER100\n"},
+		memSource("a", repeated+"HAPPYHRS\n"),
+		memSource("b", repeated),
+		memSource("c", "HAPPYHRS\nSUPER100\n"),
 	)
 	if want := []string{"HAPPYHRS", "REPEATED"}; !slices.Equal(got, want) {
 		t.Errorf("Scan = %v, want %v", got, want)
@@ -185,7 +153,7 @@ func TestScanManySources(t *testing.T) {
 		if i == 3 || i == 17 {
 			data += "IN3AND17\n"
 		}
-		sources = append(sources, memSource{fmt.Sprintf("source%02d", i), data})
+		sources = append(sources, memSource(fmt.Sprintf("source%02d", i), data))
 	}
 	got, _ := scan(t, newScanner(t, 2, defaultBudget), sources...)
 	if want := []string{"IN3AND17"}; !slices.Equal(got, want) {
@@ -203,7 +171,7 @@ func TestBucketFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	rng := rand.New(rand.NewPCG(3, 4))
-	sources, _ := randomSources(rng, 3)
+	sources, _ := scannertest.RandomSources(rng, 3)
 	_, stats := scan(t, b, sources...)
 
 	m := stats.Layout
@@ -232,7 +200,7 @@ func TestBucketFiles(t *testing.T) {
 	}
 
 	// A second scan replaces the first one's folders, and nothing else.
-	scan(t, b, memSource{"other", "HAPPYHRS\n"})
+	scan(t, b, memSource("other", "HAPPYHRS\n"))
 	entries, err := os.ReadDir(b.opts.Dir)
 	if err != nil {
 		t.Fatal(err)
@@ -250,8 +218,8 @@ func TestScanCancelled(t *testing.T) {
 	b := newScanner(t, 2, defaultBudget)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	sources := []couponsource.Source{memSource{"a", "HAPPYHRS\n"}, memSource{"b", "HAPPYHRS\n"}}
-	if _, err := b.Scan(ctx, memReader{sources}, sources, &collected{}); !errors.Is(err, context.Canceled) {
+	sources := []couponsource.Source{memSource("a", "HAPPYHRS\n"), memSource("b", "HAPPYHRS\n")}
+	if _, err := b.Scan(ctx, memReader{sources}, sources, &scannertest.Collected{}); !errors.Is(err, context.Canceled) {
 		t.Errorf("Scan = %v, want context.Canceled", err)
 	}
 }
@@ -359,44 +327,3 @@ type sized int64
 func (s sized) Info() couponsource.Info          { return couponsource.Info{} }
 func (s sized) Open() (io.ReadSeekCloser, error) { return nil, errors.New("not readable") }
 func (s sized) EstimatedSize() int64             { return int64(s) }
-
-// randomSources returns n sources drawn from a small pool of codes, so codes
-// overlap across sources and repeat within them, mixed with lines that are
-// not codes. counts maps each code to the number of sources it appears in.
-func randomSources(rng *rand.Rand, n int) ([]couponsource.Source, map[string]int) {
-	const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	pool := make([]string, 300)
-	for i := range pool {
-		code := make([]byte, 8+rng.IntN(3))
-		for j := range code {
-			code[j] = alphabet[rng.IntN(len(alphabet))]
-		}
-		pool[i] = string(code)
-	}
-	junk := []string{"", "SHORT", "HAPPY-HR", "WAYTOOLONGFORACODE"}
-
-	sources := make([]couponsource.Source, n)
-	counts := map[string]int{}
-	for i := range sources {
-		var text strings.Builder
-		seen := map[string]bool{}
-		newline := "\n"
-		if rng.IntN(2) == 0 {
-			newline = "\r\n"
-		}
-		for range rng.IntN(3000) {
-			if rng.IntN(10) == 0 {
-				text.WriteString(junk[rng.IntN(len(junk))] + newline)
-				continue
-			}
-			code := pool[rng.IntN(len(pool))]
-			seen[code] = true
-			text.WriteString(code + newline)
-		}
-		for code := range seen {
-			counts[code]++
-		}
-		sources[i] = memSource{fmt.Sprint(i), text.String()}
-	}
-	return sources, counts
-}

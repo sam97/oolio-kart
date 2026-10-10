@@ -11,16 +11,21 @@ import (
 	envconfig "github.com/sam97/oolio-kart/pkg/helpers/config"
 	"github.com/sam97/oolio-kart/pkg/helpers/logging"
 	"github.com/sam97/oolio-kart/pkg/services/coupons"
+	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner"
+	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner/clickhouse"
 )
 
 type config struct {
-	Dir         string             `mapstructure:"coupons_dir"`
-	BucketDir   string             `mapstructure:"coupons_bucket_dir"`
-	MemoryLimit envconfig.ByteSize `mapstructure:"coupons_memory_limit"`
-	Schedule    schedule           `mapstructure:"coupons_schedule"`
-	DatabaseURL string             `mapstructure:"database_url"`
-	LogLevel    slog.Level         `mapstructure:"log_level"`
-	LogFormat   logging.Format     `mapstructure:"log_format"`
+	Dir           string             `mapstructure:"coupons_dir"`
+	Scanner       string             `mapstructure:"coupons_scanner"`
+	BucketDir     string             `mapstructure:"coupons_bucket_dir"`
+	ClickHouseURL string             `mapstructure:"clickhouse_url"`
+	ClickHouseDir string             `mapstructure:"coupons_clickhouse_dir"`
+	MemoryLimit   envconfig.ByteSize `mapstructure:"coupons_memory_limit"`
+	Schedule      schedule           `mapstructure:"coupons_schedule"`
+	DatabaseURL   string             `mapstructure:"database_url"`
+	LogLevel      slog.Level         `mapstructure:"log_level"`
+	LogFormat     logging.Format     `mapstructure:"log_format"`
 }
 
 // schedule is a cron expression, such as "*/5 * * * *", or a descriptor,
@@ -49,8 +54,20 @@ func loadConfig(dir string) (config, error) {
 		return config{}, err
 	}
 	var problems []error
-	if cfg.Dir == "" || cfg.BucketDir == "" {
-		problems = append(problems, errors.New("COUPONS_DIR and COUPONS_BUCKET_DIR must be set"))
+	if cfg.Dir == "" {
+		problems = append(problems, errors.New("COUPONS_DIR must be set"))
+	}
+	switch cfg.Scanner {
+	case scanner.BucketsName:
+		if cfg.BucketDir == "" {
+			problems = append(problems, errors.New("COUPONS_BUCKET_DIR must be set for the go scanner"))
+		}
+	case clickhouse.Name:
+		if cfg.ClickHouseURL == "" || cfg.ClickHouseDir == "" {
+			problems = append(problems, errors.New("CLICKHOUSE_URL and COUPONS_CLICKHOUSE_DIR must be set for the clickhouse scanner"))
+		}
+	default:
+		problems = append(problems, fmt.Errorf("COUPONS_SCANNER %q must be one of %v", cfg.Scanner, coupons.Scanners))
 	}
 	if cfg.MemoryLimit < coupons.MinMemoryLimit {
 		problems = append(problems, fmt.Errorf("COUPONS_MEMORY_LIMIT must be at least %s", humanize.IBytes(coupons.MinMemoryLimit)))
