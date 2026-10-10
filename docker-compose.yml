@@ -119,8 +119,9 @@ services:
       COUPONS_DIR: /data
       COUPONS_SCANNER: ${COUPONS_SCANNER:-go}
       # Hidden from the coupon file listing; the container is read-only, so
-      # bucket files live in the coupons volume.
+      # bucket and Pebble files live in the coupons volume.
       COUPONS_BUCKET_DIR: /data/.buckets
+      COUPONS_PEBBLE_DIR: /data/.pebble
       CLICKHOUSE_URL: clickhouse://kart:kart@clickhouse:9000/coupons
       # /data as the clickhouse service sees it, under its user_files.
       COUPONS_CLICKHOUSE_DIR: coupons

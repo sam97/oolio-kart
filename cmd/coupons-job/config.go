@@ -13,6 +13,7 @@ import (
 	"github.com/sam97/oolio-kart/pkg/services/coupons"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner/clickhouse"
+	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner/pebble"
 )
 
 type config struct {
@@ -21,6 +22,7 @@ type config struct {
 	BucketDir     string             `mapstructure:"coupons_bucket_dir"`
 	ClickHouseURL string             `mapstructure:"clickhouse_url"`
 	ClickHouseDir string             `mapstructure:"coupons_clickhouse_dir"`
+	PebbleDir     string             `mapstructure:"coupons_pebble_dir"`
 	MemoryLimit   envconfig.ByteSize `mapstructure:"coupons_memory_limit"`
 	Schedule      schedule           `mapstructure:"coupons_schedule"`
 	DatabaseURL   string             `mapstructure:"database_url"`
@@ -65,6 +67,10 @@ func loadConfig(dir string) (config, error) {
 	case clickhouse.Name:
 		if cfg.ClickHouseURL == "" || cfg.ClickHouseDir == "" {
 			problems = append(problems, errors.New("CLICKHOUSE_URL and COUPONS_CLICKHOUSE_DIR must be set for the clickhouse scanner"))
+		}
+	case pebble.Name:
+		if cfg.PebbleDir == "" {
+			problems = append(problems, errors.New("COUPONS_PEBBLE_DIR must be set for the pebble scanner"))
 		}
 	default:
 		problems = append(problems, fmt.Errorf("COUPONS_SCANNER %q must be one of %v", cfg.Scanner, coupons.Scanners))

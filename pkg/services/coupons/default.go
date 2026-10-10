@@ -14,10 +14,11 @@ import (
 	"github.com/sam97/oolio-kart/pkg/services/coupons/codec"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner/clickhouse"
+	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner/pebble"
 )
 
 // Scanners are the names Options.Scanner accepts; the first is the default.
-var Scanners = []string{scanner.BucketsName, clickhouse.Name}
+var Scanners = []string{scanner.BucketsName, clickhouse.Name, pebble.Name}
 
 // Options configure the default pipeline.
 type Options struct {
@@ -33,6 +34,9 @@ type Options struct {
 
 	// ClickHouse configures the clickhouse scanner.
 	ClickHouse ClickHouseOptions
+
+	// PebbleDir holds the pebble scanner's database.
+	PebbleDir string
 
 	// MemoryLimit caps the build, in bytes; at least MinMemoryLimit. The
 	// clickhouse scanner's memory is capped on the server instead.
@@ -123,6 +127,25 @@ func newScannerFor(opts Options, budget scanner.Budget) (ScannerFor, func() erro
 			scan, err := clickhouse.New(clickhouse.Options{Conn: conn, Dir: opts.ClickHouse.Dir, Settings: settings})
 			return scan, Rules(settings, clickhouse.Name), err
 		}, conn.Close, nil
+
+	case pebble.Name:
+		if opts.PebbleDir == "" {
+			return nil, nil, errors.New("PebbleDir is required by the pebble scanner")
+		}
+		return func(settings models.CouponSettings) (scanner.Scanner, string, error) {
+			codes, err := codec.NewAlphanumeric(settings.MinLength, settings.MaxLength)
+			if err != nil {
+				return nil, "", err
+			}
+			scan, err := pebble.New(pebble.Options{
+				Dir:      opts.PebbleDir,
+				Codec:    codes,
+				MinFiles: settings.MinFiles,
+				Budget:   budget,
+				Logger:   opts.Logger,
+			})
+			return scan, Rules(settings, pebble.Name), err
+		}, noClose, nil
 	}
 	return nil, nil, fmt.Errorf("unknown scanner %q, want one of %v", opts.Scanner, Scanners)
 }

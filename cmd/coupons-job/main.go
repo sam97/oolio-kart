@@ -67,6 +67,7 @@ func build(once bool) error {
 		Scanner:     cfg.Scanner,
 		BucketDir:   cfg.BucketDir,
 		ClickHouse:  coupons.ClickHouseOptions{URL: cfg.ClickHouseURL, Dir: cfg.ClickHouseDir},
+		PebbleDir:   cfg.PebbleDir,
 		MemoryLimit: int64(cfg.MemoryLimit),
 		Store:       stores.Coupons,
 		Settings:    stores.CouponSettings,

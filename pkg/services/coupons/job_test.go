@@ -27,6 +27,7 @@ import (
 	"github.com/sam97/oolio-kart/pkg/services/coupons/codec"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner/clickhouse"
+	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner/pebble"
 )
 
 // memoryStore is a couponstore.Store and couponstore.Settings in memory.
@@ -127,6 +128,7 @@ func jobOptions(t *testing.T, dir string, store *memoryStore) Options {
 		Files:       datasources.CouponFiles(dir),
 		BucketDir:   t.TempDir(),
 		ClickHouse:  ClickHouseOptions{URL: "clickhouse://localhost:9000/coupons", Dir: "coupons"},
+		PebbleDir:   t.TempDir(),
 		MemoryLimit: MinMemoryLimit,
 		Store:       store,
 		Settings:    store,
@@ -300,6 +302,7 @@ func TestNewDefaultScanners(t *testing.T) {
 		"":           {&scanner.Buckets{}, "go"},
 		"go":         {&scanner.Buckets{}, "go"},
 		"clickhouse": {&clickhouse.Scanner{}, "clickhouse"},
+		"pebble":     {&pebble.Scanner{}, "pebble"},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -330,6 +333,35 @@ func TestNewDefaultScanners(t *testing.T) {
 	if _, err := NewDefault(opts); err == nil {
 		t.Error("NewDefault accepted an unknown scanner")
 	}
+}
+
+// TestJobPebble runs the default pipeline with the pebble scanner, reading
+// real files, and checks it publishes the codes and leaves no database
+// behind.
+func TestJobPebble(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.txt", "HAPPYHRS\nFIFTYOFF\nSUPER100\nSUPER100\n")
+	writeFile(t, dir, "b.txt", "HAPPYHRS\r\nMOODYHRS\r\n")
+	writeFile(t, dir, "c.txt", "FIFTYOFF\n")
+	store := newMemoryStore()
+	opts := jobOptions(t, dir, store)
+	opts.Scanner = pebble.Name
+	job, err := NewDefault(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer job.Close()
+
+	if result := runOnce(t, job, Built); result.Scan.Scanner != pebble.Name || result.Codes != 2 {
+		t.Errorf("result = %+v, want 2 codes from the pebble scanner", result)
+	}
+	if got, want := store.publishedCodes(), []string{"FIFTYOFF", "HAPPYHRS"}; !slices.Equal(got, want) {
+		t.Errorf("published %v, want %v", got, want)
+	}
+	if _, err := os.Stat(opts.PebbleDir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("after the build, %s: %v", opts.PebbleDir, err)
+	}
+	runOnce(t, job, Unchanged)
 }
 
 // every runs at a fixed interval.
@@ -426,10 +458,13 @@ func TestBudget(t *testing.T) {
 
 // TestBaseFiles builds the valid coupons from the real coupon base files in
 // COUPONS_DIR, or the repository's data/coupons, under the cap in
-// COUPONS_MEMORY_LIMIT, or 256 MiB, and fails if memory goes over it. Bucket
-// files go to COUPONS_BUCKET_DIR, or a temporary folder. Run it with:
+// COUPONS_MEMORY_LIMIT, or 256 MiB, and fails if memory goes over it. It uses
+// the scanner COUPONS_SCANNER names, go or pebble, defaulting to go. Bucket
+// files go to COUPONS_BUCKET_DIR and the Pebble database to
+// COUPONS_PEBBLE_DIR, or to temporary folders. Run it with:
 //
 //	go test -v -run TestBaseFiles ./pkg/services/coupons
+//	COUPONS_SCANNER=pebble go test -v -run TestBaseFiles ./pkg/services/coupons
 func TestBaseFiles(t *testing.T) {
 	if testing.Short() {
 		t.Skip("reads ~3 GB of coupon data")
@@ -451,7 +486,16 @@ func TestBaseFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	buckets, err := scanner.NewBuckets(scanner.BucketOptions{Codec: codes, MinFiles: 2, Dir: bucketDir, Budget: budget.Scanner})
+	var scan scanner.Scanner
+	switch name := cmp.Or(os.Getenv("COUPONS_SCANNER"), scanner.BucketsName); name {
+	case scanner.BucketsName:
+		scan, err = scanner.NewBuckets(scanner.BucketOptions{Codec: codes, MinFiles: 2, Dir: bucketDir, Budget: budget.Scanner})
+	case pebble.Name:
+		pebbleDir := cmp.Or(os.Getenv("COUPONS_PEBBLE_DIR"), filepath.Join(t.TempDir(), "pebble"))
+		scan, err = pebble.New(pebble.Options{Dir: pebbleDir, Codec: codes, MinFiles: 2, Budget: budget.Scanner})
+	default:
+		t.Skipf("COUPONS_SCANNER=%s is not supported by this test", name)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +504,7 @@ func TestBaseFiles(t *testing.T) {
 	debug.FreeOSMemory()
 	peak := startMemorySampler()
 	var found collected
-	stats, err := buckets.Scan(t.Context(), reader, sources, &found)
+	stats, err := scan.Scan(t.Context(), reader, sources, &found)
 	footprint := peak()
 	if err != nil {
 		t.Fatal(err)

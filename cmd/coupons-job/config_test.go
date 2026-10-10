@@ -60,12 +60,12 @@ func TestLoadConfig(t *testing.T) {
 		t.Errorf("unexpected overrides: %+v", cfg)
 	}
 
-	for _, name := range []string{"clickhouse"} {
+	for _, name := range []string{"clickhouse", "pebble"} {
 		cfg, err = loadFrom(t, map[string]string{"COUPONS_SCANNER": name})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg.Scanner != name || cfg.ClickHouseURL == "" || cfg.ClickHouseDir == "" {
+		if cfg.Scanner != name || cfg.ClickHouseURL == "" || cfg.ClickHouseDir == "" || cfg.PebbleDir == "" {
 			t.Errorf("unexpected %s config: %+v", name, cfg)
 		}
 	}
