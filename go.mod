@@ -3,15 +3,18 @@ module github.com/sam97/oolio-kart
 go 1.27.1
 
 require (
+	github.com/dustin/go-humanize v1.1.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
+	github.com/klauspost/pgzip v1.2.7
 	github.com/labstack/echo/v5 v5.4.0
 	github.com/spf13/viper v1.21.0
 )
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	github.com/klauspost/compress v1.20.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
