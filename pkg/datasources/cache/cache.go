@@ -21,6 +21,9 @@ type Cache interface {
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 
 	Delete(ctx context.Context, key string) error
+
+	// Purge removes every entry.
+	Purge(ctx context.Context) error
 }
 
 // GetJSON reads key from cache and decodes it into a T.

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/dustin/go-humanize"
 
@@ -15,69 +14,76 @@ import (
 	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner"
 )
 
-// Settings configure the default pipeline.
-type Settings struct {
-	// Dir is the watched folder of coupon base files. The stored result is
-	// kept there too.
+// Options configure the default pipeline.
+type Options struct {
+	// Dir is the folder of coupon base files.
 	Dir string
 
-	// BucketDir holds the bucket files between scans.
+	// BucketDir holds the bucket files between builds.
 	BucketDir string
 
 	// MemoryLimit caps the build, in bytes; at least MinMemoryLimit.
 	MemoryLimit int64
 
-	// MinFiles is how many files a code must appear in; it defaults to 2.
-	MinFiles int
-
-	PollInterval time.Duration
-	OnLoad       func(LoadResult)
-	Logger       *slog.Logger
+	Store    couponstore.Store
+	Settings couponstore.Settings
+	Locker   Locker
+	Logger   *slog.Logger
 }
 
 // NewDefault wires the standard pipeline: files in a folder, gzip or plain
-// text, alphanumeric codes, the bucket scanner and a JSON result file.
-func NewDefault(settings Settings) (*Service, error) {
-	if settings.MemoryLimit < MinMemoryLimit {
+// text, alphanumeric codes and the bucket scanner, publishing to opts.Store.
+func NewDefault(opts Options) (*Job, error) {
+	if opts.MemoryLimit < MinMemoryLimit {
 		return nil, fmt.Errorf("memory limit %s is below the minimum of %s",
-			humanize.IBytes(uint64(max(settings.MemoryLimit, 0))), humanize.IBytes(MinMemoryLimit))
+			humanize.IBytes(uint64(max(opts.MemoryLimit, 0))), humanize.IBytes(MinMemoryLimit))
 	}
-	if settings.Dir == "" || settings.BucketDir == "" {
+	if opts.Dir == "" || opts.BucketDir == "" {
 		return nil, errors.New("Dir and BucketDir are required")
 	}
-	if settings.MinFiles == 0 {
-		settings.MinFiles = 2
+	if opts.Store == nil || opts.Settings == nil || opts.Locker == nil {
+		return nil, errors.New("Store, Settings and Locker are required")
 	}
-	if settings.Logger == nil {
-		settings.Logger = slog.Default()
+	if opts.Logger == nil {
+		opts.Logger = slog.Default()
 	}
 
-	codes, err := codec.NewAlphanumeric(models.CouponMinLength, models.CouponMaxLength)
+	budget := NewBudget(opts.MemoryLimit)
+	opts.Logger.Info("coupon memory budget", "budget", budget)
+
+	return New(Config{
+		Reader:   couponsource.NewFS(opts.Dir, budget.Reader, couponsource.NewGzip()),
+		Store:    opts.Store,
+		Settings: opts.Settings,
+		Locker:   opts.Locker,
+		ScannerFor: func(settings models.CouponSettings) (scanner.Scanner, string, error) {
+			return NewBucketScanner(settings, opts.BucketDir, budget.Scanner)
+		},
+		Logger: opts.Logger,
+	}), nil
+}
+
+// NewBucketScanner returns the bucket scanner for alphanumeric codes under
+// settings, and its rules string.
+func NewBucketScanner(settings models.CouponSettings, bucketDir string, budget scanner.Budget) (scanner.Scanner, string, error) {
+	codes, err := codec.NewAlphanumeric(settings.MinLength, settings.MaxLength)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	rules := fmt.Sprintf("alphanumeric:%d-%d;minFiles=%d", models.CouponMinLength, models.CouponMaxLength, settings.MinFiles)
-
-	budget := NewBudget(settings.MemoryLimit)
 	buckets, err := scanner.NewBuckets(scanner.BucketOptions{
 		Codec:    codes,
 		MinFiles: settings.MinFiles,
-		Dir:      settings.BucketDir,
-		Rules:    rules,
-		Budget:   budget.Scanner,
+		Dir:      bucketDir,
+		Budget:   budget,
 	})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	settings.Logger.Info("coupon memory budget", "budget", budget)
+	return buckets, Rules(settings), nil
+}
 
-	return New(Config{
-		Reader:       couponsource.NewFS(settings.Dir, budget.Reader, couponsource.NewGzip()),
-		Scanner:      buckets,
-		Store:        couponstore.NewJSONFile(settings.Dir),
-		Rules:        rules,
-		PollInterval: settings.PollInterval,
-		OnLoad:       settings.OnLoad,
-		Logger:       settings.Logger,
-	}), nil
+// Rules describes the settings that decide which codes are valid. The
+// discount is not one of them, so changing it never needs a build.
+func Rules(settings models.CouponSettings) string {
+	return fmt.Sprintf("alphanumeric:%d-%d;minFiles=%d", settings.MinLength, settings.MaxLength, settings.MinFiles)
 }

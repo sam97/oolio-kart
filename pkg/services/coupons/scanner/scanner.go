@@ -37,6 +37,9 @@ type Stats struct {
 	Codes   int
 	Scatter time.Duration
 	Count   time.Duration
+
+	// Layout describes the bucket files left on disk.
+	Layout couponstore.Layout `json:"-"`
 }
 
 // Budget is the memory, in bytes, the Buckets scanner may use for each part
@@ -53,11 +56,8 @@ type BucketOptions struct {
 	MinFiles int
 
 	// Dir holds the bucket files. Each scan replaces the previous scan's
-	// folders and manifest in it, and leaves anything else alone.
+	// folders in it, and leaves anything else alone.
 	Dir string
-
-	// Rules describes the validity rules; it is recorded in the manifest.
-	Rules string
 
 	Budget Budget
 }
@@ -92,7 +92,7 @@ func NewBuckets(opts BucketOptions) (*Buckets, error) {
 
 // UseHashFunction replaces the function that spreads codes over buckets. It
 // should mix all 64 bits, since buckets are hash(code) % P. name is recorded
-// in the manifest.
+// in the layout.
 func (b *Buckets) UseHashFunction(name string, hash func(uint64) uint64) {
 	b.hashName, b.hash = name, hash
 }
@@ -143,8 +143,8 @@ func (b *Buckets) Scan(ctx context.Context, reader couponsource.Reader, sources 
 		return stats, err
 	}
 	stats.Count = time.Since(start)
-
-	return stats, writeManifest(b.opts.Dir, b.newManifest(sources, files, plan))
+	stats.Layout = b.layout(sources, files, plan)
+	return stats, nil
 }
 
 // firstError keeps the first error reported by any goroutine.

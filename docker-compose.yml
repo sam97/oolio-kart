@@ -1,6 +1,48 @@
 name: oolio-kart
 
 services:
+  postgres:
+    image: postgres:18-alpine
+    # Local development credentials only; please use secrets elsewhere.
+    environment:
+      POSTGRES_USER: kart
+      POSTGRES_PASSWORD: kart
+      POSTGRES_DB: kart
+    volumes:
+      - pgdata:/var/lib/postgresql
+    # Published for local tools and TEST_DATABASE_URL; drop in production.
+    ports:
+      - "127.0.0.1:5432:5432"
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "kart", "-d", "kart"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+      start_interval: 1s
+    restart: unless-stopped
+
+  # One-shot: applies the database migrations.
+  migrate:
+    build:
+      context: .
+      args:
+        CMD: cmd/coupons-job
+    image: oolio-kart/coupons-job
+    command: ["-migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - path: ${ENV_FILE:-.env.none}
+        required: false
+    environment:
+      DATABASE_URL: postgres://kart:kart@postgres:5432/kart?sslmode=disable
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
   # One-shot: puts the coupon base files into the coupons volume, from
   # COUPONS_SEED_DIR when it has them, otherwise from S3.
   coupon-data:
@@ -11,13 +53,17 @@ services:
       - ${COUPONS_SEED_DIR:-./data/seed}:/seed:ro
       - coupons:/data
 
-  coupons-server:
+  # Builds the valid coupons on start, then on COUPONS_SCHEDULE whenever the
+  # files or rules have changed, and publishes them to Postgres.
+  coupons-job:
     build:
       context: .
       args:
-        CMD: coupons-server
-    image: oolio-kart/coupons-server
+        CMD: cmd/coupons-job
+    image: oolio-kart/coupons-job
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       coupon-data:
         condition: service_completed_successfully
     # Optional staging/production overrides: ENV_FILE=staging.env docker compose up
@@ -25,7 +71,7 @@ services:
       - path: ${ENV_FILE:-.env.none}
         required: false
     environment:
-      COUPONS_ADDR: ":8081"
+      DATABASE_URL: postgres://kart:kart@postgres:5432/kart?sslmode=disable
       COUPONS_DIR: /data
       # Hidden from the coupon file listing; the container is read-only, so
       # bucket files live in the coupons volume.
@@ -34,20 +80,18 @@ services:
     volumes:
       - coupons:/data
     mem_limit: 512m
-    # Internal only: reachable by kart-api on the compose network, not
-    # published to the host.
-    expose:
-      - "8081"
+    # Healthy once coupons are published.
     healthcheck:
       test: ["CMD", "/server", "-healthcheck"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 3
-      # The first build reads ~2 GB of gzip; later starts restore saved codes.
+      # The first build reads ~2 GB of gzip.
       start_period: 5m
       start_interval: 2s
-    # Longer than its 10s COUPONS_SHUTDOWN_TIMEOUT.
-    stop_grace_period: 15s
+    # An interrupted build publishes nothing, so a short grace period is
+    # enough.
+    stop_grace_period: 10s
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -57,17 +101,17 @@ services:
     build:
       context: .
       args:
-        CMD: kart-api
+        CMD: api/kart-api
     image: oolio-kart/kart-api
-    # Deliberately no depends_on coupons-server: the API starts and serves
-    # orders without coupons while the coupons server is loading or down.
+    # Deliberately no depends_on: the API starts and serves orders without
+    # coupons while the database is down or the first build is running.
     # Optional staging/production overrides: ENV_FILE=staging.env docker compose up
     env_file:
       - path: ${ENV_FILE:-.env.none}
         required: false
     environment:
       ADDR: ":8080"
-      COUPONS_URL: http://coupons-server:8081
+      DATABASE_URL: postgres://kart:kart@postgres:5432/kart?sslmode=disable
     ports:
       - "8080:8080"
     mem_limit: 256m
@@ -88,3 +132,4 @@ services:
 
 volumes:
   coupons:
+  pgdata:

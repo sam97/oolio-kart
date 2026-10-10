@@ -8,8 +8,8 @@ import (
 
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
-	"github.com/sam97/oolio-kart/pkg/datasources/couponclient"
 	"github.com/sam97/oolio-kart/pkg/datasources/productstore"
+	"github.com/sam97/oolio-kart/pkg/services/coupons/validator"
 	"github.com/sam97/oolio-kart/pkg/services/orders"
 )
 
@@ -17,7 +17,7 @@ type Options struct {
 	Logger   *slog.Logger
 	Products productstore.Store
 	Orders   *orders.Service
-	Coupons  couponclient.Validator
+	Coupons  validator.Validator
 
 	// APIKeys maps each accepted api_key to its scopes.
 	APIKeys map[string][]string
@@ -85,7 +85,7 @@ func NewRouter(opts Options) *echo.Echo {
 type handlers struct {
 	products productstore.Store
 	orders   *orders.Service
-	coupons  couponclient.Validator
+	coupons  validator.Validator
 	ready    func() bool
 	spec     []byte
 }

@@ -26,12 +26,14 @@ type Config struct {
 	// APIKeys maps each accepted api_key to its scopes.
 	APIKeys APIKeys `mapstructure:"api_keys"`
 
-	CouponsURL     string        `mapstructure:"coupons_url"`
-	CouponsTimeout time.Duration `mapstructure:"coupons_timeout"`
+	// DatabaseURL is where coupons-job publishes the coupons.
+	DatabaseURL         string        `mapstructure:"database_url"`
+	CouponsQueryTimeout time.Duration `mapstructure:"coupons_query_timeout"`
 
 	// A cache TTL of 0 disables caching of that kind of answer.
 	CouponCacheTTL         time.Duration `mapstructure:"coupon_cache_ttl"`
 	CouponNegativeCacheTTL time.Duration `mapstructure:"coupon_negative_cache_ttl"`
+	CouponSettingsCacheTTL time.Duration `mapstructure:"coupon_settings_cache_ttl"`
 	CacheMaxEntries        int           `mapstructure:"cache_max_entries"`
 
 	CouponRateLimit  int           `mapstructure:"coupon_rate_limit"`
@@ -60,21 +62,24 @@ func loadConfig(dir string) (Config, error) {
 func (c Config) validate() error {
 	var problems []error
 	positive := map[string]time.Duration{
-		"READ_HEADER_TIMEOUT": c.ReadHeaderTimeout,
-		"READ_TIMEOUT":        c.ReadTimeout,
-		"WRITE_TIMEOUT":       c.WriteTimeout,
-		"IDLE_TIMEOUT":        c.IdleTimeout,
-		"SHUTDOWN_TIMEOUT":    c.ShutdownTimeout,
-		"COUPONS_TIMEOUT":     c.CouponsTimeout,
-		"COUPON_RATE_WINDOW":  c.CouponRateWindow,
-		"ORDER_RATE_WINDOW":   c.OrderRateWindow,
+		"READ_HEADER_TIMEOUT":   c.ReadHeaderTimeout,
+		"READ_TIMEOUT":          c.ReadTimeout,
+		"WRITE_TIMEOUT":         c.WriteTimeout,
+		"IDLE_TIMEOUT":          c.IdleTimeout,
+		"SHUTDOWN_TIMEOUT":      c.ShutdownTimeout,
+		"COUPONS_QUERY_TIMEOUT": c.CouponsQueryTimeout,
+		"COUPON_RATE_WINDOW":    c.CouponRateWindow,
+		"ORDER_RATE_WINDOW":     c.OrderRateWindow,
 	}
 	for name, value := range positive {
 		if value <= 0 {
 			problems = append(problems, fmt.Errorf("%s must be positive", name))
 		}
 	}
-	if c.CouponCacheTTL < 0 || c.CouponNegativeCacheTTL < 0 {
+	if c.DatabaseURL == "" {
+		problems = append(problems, errors.New("DATABASE_URL must be set"))
+	}
+	if c.CouponCacheTTL < 0 || c.CouponNegativeCacheTTL < 0 || c.CouponSettingsCacheTTL < 0 {
 		problems = append(problems, errors.New("coupon cache TTLs must not be negative"))
 	}
 	if c.CacheMaxEntries < 1 {

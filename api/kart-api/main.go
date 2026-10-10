@@ -15,12 +15,14 @@ import (
 
 	"github.com/labstack/echo/v5"
 	"github.com/sam97/oolio-kart/pkg/datasources/cache"
-	"github.com/sam97/oolio-kart/pkg/datasources/couponclient"
+	"github.com/sam97/oolio-kart/pkg/datasources/couponstore"
 	"github.com/sam97/oolio-kart/pkg/datasources/orderstore"
+	"github.com/sam97/oolio-kart/pkg/datasources/postgres"
 	"github.com/sam97/oolio-kart/pkg/datasources/productstore"
 	"github.com/sam97/oolio-kart/pkg/handlers/kartapi"
 	"github.com/sam97/oolio-kart/pkg/helpers/healthcheck"
 	"github.com/sam97/oolio-kart/pkg/helpers/logging"
+	"github.com/sam97/oolio-kart/pkg/services/coupons/validator"
 	"github.com/sam97/oolio-kart/pkg/services/orders"
 )
 
@@ -61,15 +63,26 @@ func serve() error {
 	logger := logging.New(os.Stdout, cfg.LogLevel, cfg.LogFormat)
 	slog.SetDefault(logger)
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	memory, err := cache.NewMemory(cfg.CacheMaxEntries)
 	if err != nil {
 		return fmt.Errorf("create cache: %w", err)
 	}
-	client, err := couponclient.NewClient(cfg.CouponsURL, cfg.CouponsTimeout)
+	// The pool connects lazily: while the database is down, orders without
+	// coupons still work and coupon checks answer unavailable.
+	pool, err := postgres.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}
-	coupons := couponclient.NewCached(client, memory, cfg.CouponCacheTTL, cfg.CouponNegativeCacheTTL, logger)
+	defer pool.Close()
+	store := couponstore.NewPostgres(pool)
+	coupons := validator.NewStore(
+		validator.NewCachedLookup(store, memory, cfg.CouponCacheTTL, cfg.CouponNegativeCacheTTL, logger),
+		validator.NewCachedSettings(store, memory, cfg.CouponSettingsCacheTTL, logger),
+		cfg.CouponsQueryTimeout,
+	)
 
 	products := productstore.NewMemory(productstore.Demo())
 	orderService := orders.NewService(products, orderstore.NewMemory(), coupons)
@@ -91,9 +104,6 @@ func serve() error {
 		Spec:               openAPI,
 	})
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	// Fail readiness as soon as shutdown starts, so load balancers stop
 	// routing here while in-flight requests drain.
 	go func() {
@@ -102,7 +112,7 @@ func serve() error {
 		ready.Store(false)
 	}()
 
-	logger.Info("starting", "coupons_url", cfg.CouponsURL)
+	logger.Info("starting", "addr", cfg.Addr)
 	server := echo.StartConfig{
 		Address:         cfg.Addr,
 		HideBanner:      true,

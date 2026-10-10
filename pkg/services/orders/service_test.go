@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sam97/oolio-kart/pkg/datasources/couponclient"
 	"github.com/sam97/oolio-kart/pkg/datasources/orderstore"
 	"github.com/sam97/oolio-kart/pkg/datasources/productstore"
 	"github.com/sam97/oolio-kart/pkg/models"
+	"github.com/sam97/oolio-kart/pkg/services/coupons/validator"
 )
 
 type fakeCoupons struct {
@@ -26,7 +26,7 @@ func (f *fakeCoupons) Validate(_ context.Context, code string) (models.Coupon, e
 	return models.Coupon{Code: code, DiscountPercent: 10}, nil
 }
 
-func newTestService(coupons couponclient.Validator) (*Service, *orderstore.Memory) {
+func newTestService(coupons validator.Validator) (*Service, *orderstore.Memory) {
 	products := productstore.NewMemory([]models.Product{
 		{ID: "1", Name: "Waffle", Price: 650},
 		{ID: "2", Name: "Brownie", Price: 455},

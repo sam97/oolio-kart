@@ -2,7 +2,6 @@ package scanner
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sam97/oolio-kart/pkg/datasources/couponsource"
+	"github.com/sam97/oolio-kart/pkg/datasources/couponstore"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/codec"
 )
 
@@ -64,8 +64,9 @@ func (r memReader) Read(ctx context.Context, sources []couponsource.Source, out 
 type collected struct{ codes []string }
 
 func (c *collected) Add(code string) error { c.codes = append(c.codes, code); return nil }
-func (c *collected) Commit() error         { return nil }
 func (c *collected) Abort()                {}
+
+func (c *collected) Commit(context.Context, couponstore.Manifest) error { return nil }
 
 var defaultBudget = Budget{Encoders: 4 << 20, Buckets: 4 << 20, Count: 16 << 20}
 
@@ -75,7 +76,7 @@ func newScanner(t *testing.T, minFiles int, budget Budget) *Buckets {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := NewBuckets(BucketOptions{Codec: alnum, MinFiles: minFiles, Dir: t.TempDir(), Rules: "test", Budget: budget})
+	b, err := NewBuckets(BucketOptions{Codec: alnum, MinFiles: minFiles, Dir: t.TempDir(), Budget: budget})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,8 +183,8 @@ func TestScanManySources(t *testing.T) {
 	}
 }
 
-// TestBucketFiles checks the files a scan leaves behind: a manifest, and in
-// each source's folder every bucket sorted and de-duplicated.
+// TestBucketFiles checks the files a scan leaves behind: in each source's
+// folder every bucket sorted and de-duplicated, as the layout describes.
 func TestBucketFiles(t *testing.T) {
 	b := newScanner(t, 2, Budget{Encoders: 1, Buckets: 1 << 20, Count: 64 << 10})
 	b.UseHashFunction("identity", func(x uint64) uint64 { return x })
@@ -195,9 +196,9 @@ func TestBucketFiles(t *testing.T) {
 	sources, _ := randomSources(rng, 3)
 	_, stats := scan(t, b, sources...)
 
-	m := readManifest(t, b.opts.Dir)
-	if m.Buckets != stats.Buckets || m.Hash != "identity" || m.Rules != "test" || len(m.Sources) != 3 {
-		t.Fatalf("manifest = %+v, stats %+v", m, stats)
+	m := stats.Layout
+	if m.Buckets != stats.Buckets || m.Hash != "identity" || len(m.Sources) != 3 {
+		t.Fatalf("layout = %+v, stats %+v", m, stats)
 	}
 	for _, source := range m.Sources {
 		var codes int64
@@ -216,7 +217,7 @@ func TestBucketFiles(t *testing.T) {
 			codes += int64(len(values))
 		}
 		if codes != source.Codes {
-			t.Errorf("%s holds %d codes, manifest says %d", source.Dir, codes, source.Codes)
+			t.Errorf("%s holds %d codes, layout says %d", source.Dir, codes, source.Codes)
 		}
 	}
 
@@ -230,7 +231,7 @@ func TestBucketFiles(t *testing.T) {
 	for _, entry := range entries {
 		names = append(names, entry.Name())
 	}
-	if want := []string{"keep.txt", manifestName, sourceDir("other")}; !slices.Equal(names, want) {
+	if want := []string{"keep.txt", sourceDir("other")}; !slices.Equal(names, want) {
 		t.Errorf("bucket folder holds %v, want %v", names, want)
 	}
 }
@@ -242,9 +243,6 @@ func TestScanCancelled(t *testing.T) {
 	sources := []couponsource.Source{memSource{"a", "HAPPYHRS\n"}, memSource{"b", "HAPPYHRS\n"}}
 	if _, err := b.Scan(ctx, memReader{sources}, sources, &collected{}); !errors.Is(err, context.Canceled) {
 		t.Errorf("Scan = %v, want context.Canceled", err)
-	}
-	if _, err := os.Stat(filepath.Join(b.opts.Dir, manifestName)); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("a cancelled scan left a manifest: %v", err)
 	}
 }
 
@@ -351,19 +349,6 @@ type sized int64
 func (s sized) Info() couponsource.Info          { return couponsource.Info{} }
 func (s sized) Open() (io.ReadSeekCloser, error) { return nil, errors.New("not readable") }
 func (s sized) EstimatedSize() int64             { return int64(s) }
-
-func readManifest(t *testing.T, dir string) manifest {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var m manifest
-	if err := json.Unmarshal(data, &m); err != nil {
-		t.Fatal(err)
-	}
-	return m
-}
 
 // randomSources returns n sources drawn from a small pool of codes, so codes
 // overlap across sources and repeat within them, mixed with lines that are

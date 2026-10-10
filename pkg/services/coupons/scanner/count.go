@@ -134,7 +134,7 @@ func (w *countWorker) count(parts []*bucketFile) (valid []uint64, big bool, err 
 		if err := writeValues(part.path, values); err != nil {
 			return nil, false, err
 		}
-		part.codes = int64(len(values)) // now the distinct count, for the manifest
+		part.codes = int64(len(values)) // now the distinct count, for the layout
 		cursors = append(cursors, memoryCursor(values))
 	}
 	valid, err = w.collect(cursors)

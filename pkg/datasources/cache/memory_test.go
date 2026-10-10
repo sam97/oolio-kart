@@ -95,3 +95,18 @@ func TestJSONHelpers(t *testing.T) {
 		t.Errorf("GetJSON(missing) = %v, %v", found, err)
 	}
 }
+
+func TestMemoryPurge(t *testing.T) {
+	ctx := t.Context()
+	mem, _ := newTestMemory(t, 4)
+	mem.Set(ctx, "a", []byte("1"), 0)
+	mem.Set(ctx, "b", []byte("2"), time.Minute)
+	if err := mem.Purge(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"a", "b"} {
+		if _, found, _ := mem.Get(ctx, key); found {
+			t.Errorf("%s survived Purge", key)
+		}
+	}
+}

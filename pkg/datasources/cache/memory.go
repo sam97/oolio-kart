@@ -54,3 +54,8 @@ func (m *Memory) Delete(_ context.Context, key string) error {
 	m.entries.Remove(key)
 	return nil
 }
+
+func (m *Memory) Purge(_ context.Context) error {
+	m.entries.Purge()
+	return nil
+}

@@ -11,9 +11,9 @@ import (
 // Info identifies one version of a source. Two scans of the same files see
 // equal Infos, so a change to any of them means the files changed.
 type Info struct {
-	Name    string
-	Size    int64
-	ModTime time.Time
+	Name    string    `json:"name"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"modTime"`
 }
 
 func (info Info) Equal(other Info) bool {

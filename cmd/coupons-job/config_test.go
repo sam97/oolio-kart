@@ -10,15 +10,13 @@ import (
 	envconfig "github.com/sam97/oolio-kart/pkg/helpers/config"
 )
 
-// loadFrom loads the config from the committed .env.defaults with only
-// vars set among the known variables, and COUPONS_DIR pointing at an empty
-// directory.
+// loadFrom loads the config from the committed .env.defaults with only vars
+// set among the known variables.
 func loadFrom(t *testing.T, vars map[string]string) (config, error) {
 	t.Helper()
 	for _, key := range append(envconfig.Keys(config{}), envconfig.FileVar) {
 		t.Setenv(key, "")
 	}
-	t.Setenv("COUPONS_DIR", t.TempDir())
 	for name, value := range vars {
 		t.Setenv(name, value)
 	}
@@ -45,28 +43,29 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Addr != "127.0.0.1:8081" || cfg.PollInterval != 2*time.Second || cfg.DiscountPercent != 10 || cfg.LogLevel != slog.LevelInfo ||
-		cfg.MemoryLimit != 256<<20 || cfg.BucketDir != "data/buckets" {
+	start := time.Date(2026, 10, 10, 9, 0, 30, 0, time.UTC)
+	if cfg.Dir != "data/coupons" || cfg.BucketDir != "data/buckets" || cfg.MemoryLimit != 256<<20 ||
+		cfg.LogLevel != slog.LevelInfo || cfg.DatabaseURL == "" || cfg.Schedule.Next(start) != start.Add(time.Minute) {
 		t.Errorf("unexpected defaults: %+v", cfg)
 	}
 
-	cfg, err = loadFrom(t, map[string]string{"LOG_LEVEL": "debug", "COUPONS_DISCOUNT_PERCENT": "25", "COUPONS_POLL_INTERVAL": "500ms", "COUPONS_MEMORY_LIMIT": "1GiB"})
+	cfg, err = loadFrom(t, map[string]string{"LOG_LEVEL": "debug", "COUPONS_SCHEDULE": "*/5 * * * *", "COUPONS_MEMORY_LIMIT": "1GiB"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.LogLevel != slog.LevelDebug || cfg.DiscountPercent != 25 || cfg.PollInterval != 500*time.Millisecond || cfg.MemoryLimit != 1<<30 {
+	if want := time.Date(2026, 10, 10, 9, 5, 0, 0, time.UTC); cfg.Schedule.Next(start) != want {
+		t.Errorf("next run = %v, want %v", cfg.Schedule.Next(start), want)
+	}
+	if cfg.LogLevel != slog.LevelDebug || cfg.MemoryLimit != 1<<30 {
 		t.Errorf("unexpected overrides: %+v", cfg)
 	}
 }
 
 func TestLoadConfigInvalid(t *testing.T) {
 	tests := map[string]map[string]string{
-		"missing dir":      {"COUPONS_DIR": "does/not/exist"},
 		"bad level":        {"LOG_LEVEL": "loud"},
 		"bad format":       {"LOG_FORMAT": "xml"},
-		"discount too big": {"COUPONS_DISCOUNT_PERCENT": "101"},
-		"zero poll":        {"COUPONS_POLL_INTERVAL": "0s"},
-		"bad duration":     {"COUPONS_SHUTDOWN_TIMEOUT": "soon"},
+		"bad schedule":     {"COUPONS_SCHEDULE": "every so often"},
 		"memory too small": {"COUPONS_MEMORY_LIMIT": "16MiB"},
 		"bad memory":       {"COUPONS_MEMORY_LIMIT": "plenty"},
 	}

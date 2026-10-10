@@ -8,20 +8,20 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/sam97/oolio-kart/pkg/datasources/couponclient"
 	"github.com/sam97/oolio-kart/pkg/datasources/orderstore"
 	"github.com/sam97/oolio-kart/pkg/datasources/productstore"
 	"github.com/sam97/oolio-kart/pkg/models"
+	"github.com/sam97/oolio-kart/pkg/services/coupons/validator"
 )
 
 type Service struct {
 	products productstore.Store
 	orders   orderstore.Store
-	coupons  couponclient.Validator
+	coupons  validator.Validator
 	newID    func() (string, error)
 }
 
-func NewService(products productstore.Store, orders orderstore.Store, coupons couponclient.Validator) *Service {
+func NewService(products productstore.Store, orders orderstore.Store, coupons validator.Validator) *Service {
 	return &Service{products: products, orders: orders, coupons: coupons, newID: newUUID}
 }
 
