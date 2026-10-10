@@ -7,17 +7,22 @@ import (
 	"os"
 	"time"
 
+	"github.com/dustin/go-humanize"
+
 	envconfig "github.com/sam97/oolio-kart/pkg/helpers/config"
+	"github.com/sam97/oolio-kart/pkg/services/coupons"
 )
 
 type config struct {
-	Addr            string        `mapstructure:"coupons_addr"`
-	Dir             string        `mapstructure:"coupons_dir"`
-	PollInterval    time.Duration `mapstructure:"coupons_poll_interval"`
-	DiscountPercent int           `mapstructure:"coupons_discount_percent"` // TODO: This should be in a data store
-	ShutdownTimeout time.Duration `mapstructure:"coupons_shutdown_timeout"`
-	LogLevel        slog.Level    `mapstructure:"log_level"`
-	LogFormat       string        `mapstructure:"log_format"`
+	Addr            string             `mapstructure:"coupons_addr"`
+	Dir             string             `mapstructure:"coupons_dir"`
+	BucketDir       string             `mapstructure:"coupons_bucket_dir"`
+	MemoryLimit     envconfig.ByteSize `mapstructure:"coupons_memory_limit"`
+	PollInterval    time.Duration      `mapstructure:"coupons_poll_interval"`
+	DiscountPercent int                `mapstructure:"coupons_discount_percent"` // TODO: This should be in a data store
+	ShutdownTimeout time.Duration      `mapstructure:"coupons_shutdown_timeout"`
+	LogLevel        slog.Level         `mapstructure:"log_level"`
+	LogFormat       string             `mapstructure:"log_format"`
 }
 
 // loadConfig reads the configuration from the env files in dir and the
@@ -30,6 +35,12 @@ func loadConfig(dir string) (config, error) {
 
 	if info, err := os.Stat(cfg.Dir); err != nil || !info.IsDir() {
 		return config{}, fmt.Errorf("COUPONS_DIR %q is not a readable directory", cfg.Dir)
+	}
+	if cfg.BucketDir == "" {
+		return config{}, errors.New("COUPONS_BUCKET_DIR must be set")
+	}
+	if cfg.MemoryLimit < coupons.MinMemoryLimit {
+		return config{}, fmt.Errorf("COUPONS_MEMORY_LIMIT must be at least %s", humanize.IBytes(coupons.MinMemoryLimit))
 	}
 	if cfg.DiscountPercent < 0 || cfg.DiscountPercent > 100 {
 		return config{}, errors.New("COUPONS_DISCOUNT_PERCENT must be between 0 and 100")

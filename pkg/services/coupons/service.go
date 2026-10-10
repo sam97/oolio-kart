@@ -1,28 +1,44 @@
+// Package coupons keeps the set of valid promo codes in sync with a set of
+// coupon base files.
+//
+// A promo code is valid when it appears in at least MinFiles of the files.
+// The work is split into swappable stages:
+//
+//	couponsource.Reader ──chunks──▶ scanner.Scanner ──codes──▶ couponstore.Store
+//	  lists and reads files          finds valid codes          keeps the result
+//
+// Service watches the Reader's files, runs a scan when they change, and
+// serves lookups from the stored result.
 package coupons
 
 import (
 	"context"
+	"errors"
 	"log/slog"
-	"maps"
-	"os"
-	"path/filepath"
 	"runtime/debug"
 	"slices"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/sam97/oolio-kart/pkg/datasources/couponsource"
+	"github.com/sam97/oolio-kart/pkg/datasources/couponstore"
+	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner"
 )
 
-// DefaultPollInterval is how often the watched folder is checked for changes.
+// DefaultPollInterval is how often the files are checked for changes.
 const DefaultPollInterval = 2 * time.Second
 
 type Config struct {
-	// Dir is the watched folder. Every regular, non-hidden file in it is a
-	// coupon base file.
-	Dir string
+	Reader  couponsource.Reader
+	Scanner scanner.Scanner
+	Store   couponstore.Store
+
+	// Rules describes the validity rules. A stored result is only reused
+	// if it was built under the same rules.
+	Rules string
 
 	// PollInterval defaults to DefaultPollInterval. A change is only loaded
-	// once the folder looks the same on two polls in a row, so files that are
+	// once the files look the same on two polls in a row, so files that are
 	// still being copied in are not read half-written.
 	PollInterval time.Duration
 
@@ -39,12 +55,15 @@ type LoadResult struct {
 	Duration time.Duration
 	Err      error
 
-	// Restored is true when the codes were read from the saved result of an
-	// earlier run instead of being built from the files.
+	// Restored is true when the codes came from the store instead of a
+	// scan.
 	Restored bool
+
+	// Scan describes the scan; it is zero when Restored.
+	Scan scanner.Stats
 }
 
-// Service keeps the list of valid coupons in sync with a watched folder.
+// Service keeps the list of valid coupons in sync with the Reader's files.
 type Service struct {
 	cfg Config
 
@@ -77,92 +96,132 @@ func (s *Service) IsValid(code string) bool {
 	return found
 }
 
-// Run watches the folder and reloads the coupons whenever its contents change,
-// until ctx is cancelled. A failed load keeps the previous coupons and is
-// retried on the next change.
+// Run watches the files and reloads the coupons whenever they change, until
+// ctx is cancelled. A failed load keeps the previous coupons and is retried
+// on the next change.
 //
-// On start, if the folder is unchanged since the last successful load, the
-// saved result of that load is used right away instead of rebuilding.
+// On start, if the store holds a result for the current files, it is used
+// right away instead of waiting for a second poll and scanning.
 func (s *Service) Run(ctx context.Context) error {
-	t := time.NewTicker(s.cfg.PollInterval)
-	defer t.Stop()
+	ticker := time.NewTicker(s.cfg.PollInterval)
+	defer ticker.Stop()
 
-	var prev, loaded snapshot
-	// Files that match the saved result were complete when it was written, so
-	// they need not be seen twice before they are trusted.
-	if cur, err := scan(s.cfg.Dir); err == nil && s.restore(cur) {
-		prev, loaded = cur, cur
+	var prev, loaded []couponsource.Info
+	everLoaded := false
+	// A stored result was built from complete files, so files that match it
+	// need not be seen twice before they are trusted.
+	if sources, err := s.cfg.Reader.List(ctx); err == nil && s.restore(ctx, sources) {
+		prev, loaded, everLoaded = couponsource.Infos(sources), couponsource.Infos(sources), true
 	}
 	for {
-		cur, err := scan(s.cfg.Dir)
+		sources, err := s.cfg.Reader.List(ctx)
 		if err != nil {
-			s.cfg.Logger.Error("scan coupon folder", "dir", s.cfg.Dir, "err", err)
-		} else if maps.Equal(cur, prev) && (loaded == nil || !maps.Equal(cur, loaded)) {
-			s.load(cur)
-			loaded = cur
+			s.cfg.Logger.Error("list coupon files", "err", err)
+		} else {
+			current := couponsource.Infos(sources)
+			if couponsource.SameInfos(current, prev) && (!everLoaded || !couponsource.SameInfos(current, loaded)) {
+				s.load(ctx, sources)
+				loaded, everLoaded = current, true
+			}
+			prev = current
 		}
-		prev = cur
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-t.C:
+		case <-ticker.C:
 		}
 	}
 }
 
-func (s *Service) load(snap snapshot) {
-	files := slices.Sorted(maps.Keys(snap))
-	start := time.Now()
-	codes, err := Build(files)
-	res := LoadResult{Files: files, Codes: len(codes), Duration: time.Since(start), Err: err}
+func (s *Service) fingerprint(sources []couponsource.Source) couponstore.Fingerprint {
+	return couponstore.Fingerprint{Sources: couponsource.Infos(sources), Rules: s.cfg.Rules}
+}
 
+// restore loads the stored codes if they were built from sources. It reports
+// whether it did; on false the caller should scan.
+func (s *Service) restore(ctx context.Context, sources []couponsource.Source) bool {
+	start := time.Now()
+	codes, found, err := s.cfg.Store.Load(ctx, s.fingerprint(sources))
 	if err != nil {
-		s.cfg.Logger.Error("load coupons", "files", files, "err", err)
-	} else {
-		s.mu.Lock()
-		s.codes = codes
-		s.mu.Unlock()
-		s.cfg.Logger.Info("loaded coupons", "files", len(files), "codes", len(codes), "took", res.Duration)
-		if err := writeSaved(s.cfg.Dir, newSavedCodes(snap, codes)); err != nil {
-			s.cfg.Logger.Warn("save coupons", "file", SavedName, "err", err)
+		s.cfg.Logger.Warn("ignore stored coupons", "err", err)
+		return false
+	}
+	if !found {
+		return false
+	}
+	s.setCodes(codes)
+	s.cfg.Logger.Info("restored stored coupons", "files", len(sources), "codes", len(codes))
+	if s.cfg.OnLoad != nil {
+		s.cfg.OnLoad(LoadResult{Files: names(sources), Codes: len(codes), Duration: time.Since(start), Restored: true})
+	}
+	return true
+}
+
+func (s *Service) load(ctx context.Context, sources []couponsource.Source) {
+	if s.restore(ctx, sources) {
+		return
+	}
+	start := time.Now()
+	stats, err := s.scan(ctx, sources)
+	var codes []string
+	if err == nil {
+		var found bool
+		codes, found, err = s.cfg.Store.Load(ctx, s.fingerprint(sources))
+		if err == nil && !found {
+			err = errors.New("the store did not keep the result")
 		}
 	}
-	// A load allocates several GB that is garbage once it returns; give it
-	// back to the OS instead of holding it until the next load.
+	result := LoadResult{Files: names(sources), Codes: len(codes), Duration: time.Since(start), Err: err, Scan: stats}
+
+	if err != nil {
+		s.cfg.Logger.Error("load coupons", "files", result.Files, "err", err)
+	} else {
+		s.setCodes(codes)
+		s.cfg.Logger.Info("loaded coupons",
+			"files", len(sources),
+			"codes", len(codes),
+			"took", result.Duration,
+			"scatter", stats.Scatter,
+			"count", stats.Count,
+			"buckets", stats.Buckets,
+			"oversized", stats.Oversized,
+		)
+	}
+	// Return the scan's memory to the OS rather than holding it until the
+	// next scan.
 	debug.FreeOSMemory()
 
 	if s.cfg.OnLoad != nil {
-		s.cfg.OnLoad(res)
+		s.cfg.OnLoad(result)
 	}
 }
 
-type fileState struct {
-	size    int64
-	modTime int64
-}
-
-// snapshot maps each file path in the folder to its size and mtime.
-type snapshot map[string]fileState
-
-func scan(dir string) (snapshot, error) {
-	entries, err := os.ReadDir(dir)
+// scan runs the Scanner into a new batch, committed only if the scan
+// succeeds.
+func (s *Service) scan(ctx context.Context, sources []couponsource.Source) (scanner.Stats, error) {
+	batch, err := s.cfg.Store.Begin(ctx, s.fingerprint(sources))
 	if err != nil {
-		return nil, err
+		return scanner.Stats{}, err
 	}
-	snap := snapshot{}
-	for _, e := range entries {
-		if !e.Type().IsRegular() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		info, err := e.Info()
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		snap[filepath.Join(dir, e.Name())] = fileState{info.Size(), info.ModTime().UnixNano()}
+	stats, err := s.cfg.Scanner.Scan(ctx, s.cfg.Reader, sources, batch)
+	if err != nil {
+		batch.Abort()
+		return stats, err
 	}
-	return snap, nil
+	return stats, batch.Commit()
+}
+
+func (s *Service) setCodes(codes []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.codes = codes
+}
+
+func names(sources []couponsource.Source) []string {
+	names := make([]string, len(sources))
+	for i, source := range sources {
+		names[i] = source.Info().Name
+	}
+	return names
 }

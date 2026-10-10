@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -65,9 +66,17 @@ func serve() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Let the garbage collector work to the same cap the coupon build is
+	// sized for, unless GOMEMLIMIT already sets one.
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(int64(cfg.MemoryLimit))
+	}
+
 	var loaded atomic.Bool
-	service := coupons.New(coupons.Config{
+	service, err := coupons.NewDefault(coupons.Settings{
 		Dir:          cfg.Dir,
+		BucketDir:    cfg.BucketDir,
+		MemoryLimit:  int64(cfg.MemoryLimit),
 		PollInterval: cfg.PollInterval,
 		Logger:       logger,
 		OnLoad: func(result coupons.LoadResult) {
@@ -76,6 +85,9 @@ func serve() error {
 			}
 		},
 	})
+	if err != nil {
+		return err
+	}
 	go service.Run(ctx)
 
 	logger.Info("starting", "dir", cfg.Dir)

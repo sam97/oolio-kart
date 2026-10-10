@@ -27,11 +27,13 @@ services:
     environment:
       COUPONS_ADDR: ":8081"
       COUPONS_DIR: /data
-      # A first build peaks near 3 GB; keep the Go heap under the limit below.
-      GOMEMLIMIT: 3500MiB
+      # Hidden from the coupon file listing; the container is read-only, so
+      # bucket files live in the coupons volume.
+      COUPONS_BUCKET_DIR: /data/.buckets
+      COUPONS_MEMORY_LIMIT: 256MiB
     volumes:
       - coupons:/data
-    mem_limit: 4g
+    mem_limit: 512m
     # Internal only: reachable by kart-api on the compose network, not
     # published to the host.
     expose:

@@ -45,15 +45,16 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Addr != "127.0.0.1:8081" || cfg.PollInterval != 2*time.Second || cfg.DiscountPercent != 10 || cfg.LogLevel != slog.LevelInfo {
+	if cfg.Addr != "127.0.0.1:8081" || cfg.PollInterval != 2*time.Second || cfg.DiscountPercent != 10 || cfg.LogLevel != slog.LevelInfo ||
+		cfg.MemoryLimit != 256<<20 || cfg.BucketDir != "data/buckets" {
 		t.Errorf("unexpected defaults: %+v", cfg)
 	}
 
-	cfg, err = loadFrom(t, map[string]string{"LOG_LEVEL": "debug", "COUPONS_DISCOUNT_PERCENT": "25", "COUPONS_POLL_INTERVAL": "500ms"})
+	cfg, err = loadFrom(t, map[string]string{"LOG_LEVEL": "debug", "COUPONS_DISCOUNT_PERCENT": "25", "COUPONS_POLL_INTERVAL": "500ms", "COUPONS_MEMORY_LIMIT": "1GiB"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.LogLevel != slog.LevelDebug || cfg.DiscountPercent != 25 || cfg.PollInterval != 500*time.Millisecond {
+	if cfg.LogLevel != slog.LevelDebug || cfg.DiscountPercent != 25 || cfg.PollInterval != 500*time.Millisecond || cfg.MemoryLimit != 1<<30 {
 		t.Errorf("unexpected overrides: %+v", cfg)
 	}
 }
@@ -66,6 +67,8 @@ func TestLoadConfigInvalid(t *testing.T) {
 		"discount too big": {"COUPONS_DISCOUNT_PERCENT": "101"},
 		"zero poll":        {"COUPONS_POLL_INTERVAL": "0s"},
 		"bad duration":     {"COUPONS_SHUTDOWN_TIMEOUT": "soon"},
+		"memory too small": {"COUPONS_MEMORY_LIMIT": "16MiB"},
+		"bad memory":       {"COUPONS_MEMORY_LIMIT": "plenty"},
 	}
 	for name, vars := range tests {
 		t.Run(name, func(t *testing.T) {

@@ -17,11 +17,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 
+	"github.com/dustin/go-humanize"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 )
@@ -97,6 +99,23 @@ func splitList(from, to reflect.Type, data any) (any, error) {
 		}
 	}
 	return items, nil
+}
+
+// ByteSize is a number of bytes written in a human form such as "256MiB" or
+// "1.5 GB". IEC units (KiB, MiB, GiB) are powers of 1024; SI units (KB, MB,
+// GB) are powers of 1000.
+type ByteSize int64
+
+func (size *ByteSize) UnmarshalText(text []byte) error {
+	bytes, err := humanize.ParseBytes(string(text))
+	if err != nil {
+		return err
+	}
+	if bytes > math.MaxInt64 {
+		return fmt.Errorf("%s is too large", text)
+	}
+	*size = ByteSize(bytes)
+	return nil
 }
 
 // Keys returns the environment variable names that fill target's fields, so

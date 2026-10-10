@@ -52,6 +52,9 @@ data/coupons/*
 # Personal scratch work
 .scratch/
 
+# Bucket files written by the coupons server
+data/buckets/
+
 # Optional local copies of the gzipped coupon files for docker compose (see README)
 data/seed/*
 !data/seed/.gitkeep

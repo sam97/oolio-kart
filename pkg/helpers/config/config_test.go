@@ -100,3 +100,25 @@ func TestUnsetField(t *testing.T) {
 		t.Error("fields without a default were accepted")
 	}
 }
+
+func TestByteSize(t *testing.T) {
+	valid := map[string]ByteSize{
+		"256MiB":  256 << 20,
+		"256 MiB": 256 << 20,
+		"256MB":   256_000_000,
+		"1.5GiB":  3 << 29,
+		"1024":    1024,
+	}
+	for text, want := range valid {
+		var size ByteSize
+		if err := size.UnmarshalText([]byte(text)); err != nil || size != want {
+			t.Errorf("ByteSize(%q) = %d, %v; want %d", text, size, err, want)
+		}
+	}
+	for _, text := range []string{"", "lots", "-5MiB", "99999EiB"} {
+		var size ByteSize
+		if err := size.UnmarshalText([]byte(text)); err == nil {
+			t.Errorf("ByteSize(%q) = %d, want an error", text, size)
+		}
+	}
+}

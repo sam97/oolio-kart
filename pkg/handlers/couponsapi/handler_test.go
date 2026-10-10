@@ -37,8 +37,10 @@ func TestHandler(t *testing.T) {
 
 	var loaded atomic.Bool
 	loads := make(chan coupons.LoadResult, 1)
-	service := coupons.New(coupons.Config{
+	service, err := coupons.NewDefault(coupons.Settings{
 		Dir:          dir,
+		BucketDir:    t.TempDir(),
+		MemoryLimit:  coupons.MinMemoryLimit,
 		PollInterval: 10 * time.Millisecond,
 		Logger:       slog.New(slog.DiscardHandler),
 		OnLoad: func(result coupons.LoadResult) {
@@ -48,6 +50,9 @@ func TestHandler(t *testing.T) {
 			loads <- result
 		},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler := NewRouter(service, loaded.Load, 10, slog.New(slog.DiscardHandler))
 
 	// Before the first load every lookup is unavailable, not invalid.
