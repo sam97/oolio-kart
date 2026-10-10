@@ -11,14 +11,11 @@ import (
 )
 
 func (h *handlers) listProducts(c *echo.Context) error {
-	products, err := h.products.List(c.Request().Context())
+	catalogue, err := h.products.List(c.Request().Context())
 	if err != nil {
 		return fmt.Errorf("list products: %w", err)
 	}
-	if products == nil {
-		products = []models.Product{}
-	}
-	return c.JSON(http.StatusOK, products)
+	return c.JSON(http.StatusOK, catalogue)
 }
 
 func (h *handlers) getProduct(c *echo.Context) error {

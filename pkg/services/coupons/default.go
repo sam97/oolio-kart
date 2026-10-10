@@ -16,8 +16,8 @@ import (
 
 // Options configure the default pipeline.
 type Options struct {
-	// Dir is the folder of coupon base files.
-	Dir string
+	// Files opens the coupon base files, given the memory it may use.
+	Files couponsource.Opener
 
 	// BucketDir holds the bucket files between builds.
 	BucketDir string
@@ -27,19 +27,19 @@ type Options struct {
 
 	Store    couponstore.Store
 	Settings couponstore.Settings
-	Locker   Locker
+	Locker   couponstore.Locker
 	Logger   *slog.Logger
 }
 
-// NewDefault wires the standard pipeline: files in a folder, gzip or plain
-// text, alphanumeric codes and the bucket scanner, publishing to opts.Store.
+// NewDefault wires the standard pipeline: alphanumeric codes and the bucket
+// scanner, reading opts.Files and publishing to opts.Store.
 func NewDefault(opts Options) (*Job, error) {
 	if opts.MemoryLimit < MinMemoryLimit {
 		return nil, fmt.Errorf("memory limit %s is below the minimum of %s",
 			humanize.IBytes(uint64(max(opts.MemoryLimit, 0))), humanize.IBytes(MinMemoryLimit))
 	}
-	if opts.Dir == "" || opts.BucketDir == "" {
-		return nil, errors.New("Dir and BucketDir are required")
+	if opts.Files == nil || opts.BucketDir == "" {
+		return nil, errors.New("Files and BucketDir are required")
 	}
 	if opts.Store == nil || opts.Settings == nil || opts.Locker == nil {
 		return nil, errors.New("Store, Settings and Locker are required")
@@ -52,7 +52,7 @@ func NewDefault(opts Options) (*Job, error) {
 	opts.Logger.Info("coupon memory budget", "budget", budget)
 
 	return New(Config{
-		Reader:   couponsource.NewFS(opts.Dir, budget.Reader, couponsource.NewGzip()),
+		Reader:   opts.Files(budget.Reader),
 		Store:    opts.Store,
 		Settings: opts.Settings,
 		Locker:   opts.Locker,

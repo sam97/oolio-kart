@@ -23,6 +23,10 @@ type Order struct {
 	Discounts Cents       `json:"discounts"`
 	Items     []OrderItem `json:"items"`
 	Products  []Product   `json:"products"`
+
+	// CouponCode is the coupon the order used, if any. It is stored with the
+	// order but not part of the API response.
+	CouponCode string `json:"-"`
 }
 
 // ValidationError lists everything wrong with an OrderRequest.

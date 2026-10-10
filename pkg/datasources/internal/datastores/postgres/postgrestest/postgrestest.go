@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/sam97/oolio-kart/pkg/datasources/postgres"
+	"github.com/sam97/oolio-kart/pkg/datasources/internal/datastores/postgres"
 )
 
 // New returns a pool whose connections use a fresh, migrated schema, dropped
@@ -23,6 +23,29 @@ func New(t *testing.T) *pgxpool.Pool {
 	if url == "" {
 		t.Skip("TEST_DATABASE_URL is not set")
 	}
+	ctx := context.Background()
+	schema := Schema(t, url)
+
+	config, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := postgres.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	return pool
+}
+
+// Schema creates an empty schema in the database at url, dropped when the
+// test ends, and returns its name.
+func Schema(t *testing.T, url string) string {
+	t.Helper()
 	ctx := context.Background()
 	schema := fmt.Sprintf("test_%016x", rand.Uint64())
 
@@ -45,19 +68,5 @@ func New(t *testing.T) *pgxpool.Pool {
 			t.Error(err)
 		}
 	})
-
-	config, err := pgxpool.ParseConfig(url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	config.ConnConfig.RuntimeParams["search_path"] = schema
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	if err := postgres.Migrate(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
-	return pool
+	return schema
 }

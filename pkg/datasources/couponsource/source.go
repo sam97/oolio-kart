@@ -1,5 +1,5 @@
-// Package couponsource lists coupon base files and streams their lines in
-// chunks, decompressing them on the way.
+// Package couponsource defines how coupon base files are listed and
+// streamed in chunks of lines. datasources.CouponFiles opens a folder of them.
 package couponsource
 
 import (
@@ -66,6 +66,12 @@ type Chunk struct {
 	release func()
 }
 
+// NewChunk returns a chunk of lines from source; release hands its buffer
+// back to the reader.
+func NewChunk(source int, lines []byte, release func()) Chunk {
+	return Chunk{Source: source, Lines: lines, release: release}
+}
+
 func (c Chunk) Release() {
 	if c.release != nil {
 		c.release()
@@ -86,3 +92,6 @@ type Reader interface {
 	// sources, so consumers can size their own buffers.
 	ChunkSize(sources int) int
 }
+
+// Opener opens a Reader that may hold about memory bytes of buffers.
+type Opener func(memory int64) Reader

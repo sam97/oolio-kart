@@ -75,3 +75,10 @@ type Lookup interface {
 type Settings interface {
 	Settings(ctx context.Context) (models.CouponSettings, error)
 }
+
+// Locker keeps two builds, in this process or another, from running at once.
+type Locker interface {
+	// TryLock takes the lock if it is free. ok is false if another build
+	// holds it. unlock must be called once ok is true.
+	TryLock(ctx context.Context) (unlock func(), ok bool, err error)
+}

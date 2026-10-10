@@ -3,8 +3,8 @@ package postgres_test
 import (
 	"testing"
 
-	"github.com/sam97/oolio-kart/pkg/datasources/postgres"
-	"github.com/sam97/oolio-kart/pkg/datasources/postgres/postgrestest"
+	"github.com/sam97/oolio-kart/pkg/datasources/internal/datastores/postgres"
+	"github.com/sam97/oolio-kart/pkg/datasources/internal/datastores/postgres/postgrestest"
 )
 
 func TestMigrateTwice(t *testing.T) {

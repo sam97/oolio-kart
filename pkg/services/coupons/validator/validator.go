@@ -23,9 +23,8 @@ type Validator interface {
 var errNotBuilt = errors.New("no coupons have been built yet")
 
 // Store validates codes against the published codes, with the discount from
-// the settings. Wrap lookup and settings in CachedLookup and CachedSettings
-// to cache them; the discount then follows the settings' cache, not the
-// codes'.
+// the settings. datasources.Open caches lookups and settings when configured;
+// the discount then follows the settings cache, not the codes cache.
 type Store struct {
 	lookup   couponstore.Lookup
 	settings couponstore.Settings

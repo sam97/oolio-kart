@@ -8,14 +8,14 @@ import (
 
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
-	"github.com/sam97/oolio-kart/pkg/datasources/productstore"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/validator"
 	"github.com/sam97/oolio-kart/pkg/services/orders"
+	"github.com/sam97/oolio-kart/pkg/services/products"
 )
 
 type Options struct {
 	Logger   *slog.Logger
-	Products productstore.Store
+	Products *products.Service
 	Orders   *orders.Service
 	Coupons  validator.Validator
 
@@ -83,7 +83,7 @@ func NewRouter(opts Options) *echo.Echo {
 }
 
 type handlers struct {
-	products productstore.Store
+	products *products.Service
 	orders   *orders.Service
 	coupons  validator.Validator
 	ready    func() bool

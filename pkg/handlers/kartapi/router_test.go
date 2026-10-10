@@ -3,6 +3,8 @@ package kartapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,10 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sam97/oolio-kart/pkg/datasources/orderstore"
-	"github.com/sam97/oolio-kart/pkg/datasources/productstore"
 	"github.com/sam97/oolio-kart/pkg/models"
 	"github.com/sam97/oolio-kart/pkg/services/orders"
+	"github.com/sam97/oolio-kart/pkg/services/products"
 )
 
 // fakeCoupons knows HAPPYHRS, and fails every lookup while down is set.
@@ -35,22 +36,23 @@ func (f *fakeCoupons) Validate(_ context.Context, code string) (models.Coupon, e
 }
 
 type testServer struct {
-	handler http.Handler
-	coupons *fakeCoupons
-	ready   *atomic.Bool
+	handler  http.Handler
+	coupons  *fakeCoupons
+	products *fakeProducts
+	ready    *atomic.Bool
 }
 
 func newTestServer(t *testing.T, configure ...func(*Options)) *testServer {
 	t.Helper()
 	coupons := &fakeCoupons{}
-	products := productstore.NewMemory(productstore.Demo())
+	catalogue := &fakeProducts{products: demoProducts()}
 	ready := &atomic.Bool{}
 	ready.Store(true)
 
 	opts := Options{
 		Logger:             slog.New(slog.DiscardHandler),
-		Products:           products,
-		Orders:             orders.NewService(products, orderstore.NewMemory(), coupons),
+		Products:           products.NewService(catalogue),
+		Orders:             orders.NewService(catalogue, &fakeOrders{}, coupons),
 		Coupons:            coupons,
 		APIKeys:            map[string][]string{"apitest": {"create_order"}, "readonly": {}},
 		CouponLimit:        Limit{Requests: 1000, Window: time.Minute},
@@ -62,7 +64,7 @@ func newTestServer(t *testing.T, configure ...func(*Options)) *testServer {
 	for _, apply := range configure {
 		apply(&opts)
 	}
-	return &testServer{handler: NewRouter(opts), coupons: coupons, ready: ready}
+	return &testServer{handler: NewRouter(opts), coupons: coupons, products: catalogue, ready: ready}
 }
 
 type call struct {
@@ -141,7 +143,7 @@ func TestListProducts(t *testing.T) {
 }
 
 func TestListProductsEmpty(t *testing.T) {
-	server := newTestServer(t, func(opts *Options) { opts.Products = productstore.NewMemory(nil) })
+	server := newTestServer(t, func(opts *Options) { opts.Products = products.NewService(&fakeProducts{}) })
 	rec := server.do(t, call{method: http.MethodGet, path: "/api/product"})
 	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
 		t.Errorf("got %d %s, want 200 []", rec.Code, rec.Body)
@@ -189,6 +191,27 @@ func TestPlaceOrder(t *testing.T) {
 	if rec.Code != http.StatusOK || placed["total"] != 18.9 || placed["discounts"] != 2.1 {
 		t.Errorf("with coupon: %d total = %v, discounts = %v; want 18.9, 2.1", rec.Code, placed["total"], placed["discounts"])
 	}
+}
+
+func TestDataStoreUnavailable(t *testing.T) {
+	server := newTestServer(t)
+	server.products.err = fmt.Errorf("%w: connection refused", models.ErrUnavailable)
+
+	for _, c := range []call{
+		{method: http.MethodGet, path: "/api/product"},
+		{method: http.MethodGet, path: "/api/product/1"},
+		orderCall(`{"items":[{"productId":"1","quantity":1}]}`),
+	} {
+		rec := server.do(t, c)
+		expectError(t, rec, http.StatusServiceUnavailable, "temporarily unavailable, retry later")
+		if rec.Header().Get("Retry-After") == "" {
+			t.Errorf("%s %s: no Retry-After", c.method, c.path)
+		}
+	}
+
+	// Other store errors stay internal.
+	server.products.err = errors.New("syntax error at or near SELECT")
+	expectError(t, server.do(t, call{method: http.MethodGet, path: "/api/product"}), http.StatusInternalServerError, "internal server error")
 }
 
 func TestPlaceOrderAuth(t *testing.T) {
@@ -412,11 +435,11 @@ func TestCORSPreflight(t *testing.T) {
 }
 
 func TestPanicIsRecovered(t *testing.T) {
-	server := newTestServer(t, func(opts *Options) { opts.Products = panickyStore{} })
+	server := newTestServer(t, func(opts *Options) { opts.Products = products.NewService(panickyStore{&fakeProducts{}}) })
 	expectError(t, server.do(t, call{method: http.MethodGet, path: "/api/product"}), http.StatusInternalServerError, "internal server error")
 }
 
-type panickyStore struct{ productstore.Store }
+type panickyStore struct{ *fakeProducts }
 
 func (panickyStore) List(context.Context) ([]models.Product, error) { panic("boom") }
 

@@ -1,4 +1,6 @@
-package couponsource
+// Package files reads coupon base files from a folder, decompressing gzip on
+// the way.
+package files
 
 import (
 	"bytes"
@@ -10,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+
+	"github.com/sam97/oolio-kart/pkg/datasources/couponsource"
 )
 
 // FS reads the coupon base files in one folder: every regular file whose
@@ -26,12 +30,12 @@ func NewFS(dir string, memory int64, decompressors ...Decompressor) *FS {
 	return &FS{dir: dir, memory: memory, decompressors: decompressors}
 }
 
-func (fs *FS) List(ctx context.Context) ([]Source, error) {
+func (fs *FS) List(ctx context.Context) ([]couponsource.Source, error) {
 	entries, err := os.ReadDir(fs.dir) // sorted by name
 	if err != nil {
 		return nil, err
 	}
-	var sources []Source
+	var sources []couponsource.Source
 	for _, entry := range entries {
 		if !entry.Type().IsRegular() || strings.HasPrefix(entry.Name(), ".") {
 			continue
@@ -45,7 +49,7 @@ func (fs *FS) List(ctx context.Context) ([]Source, error) {
 		}
 		sources = append(sources, &file{
 			path:          filepath.Join(fs.dir, entry.Name()),
-			info:          Info{Name: entry.Name(), Size: info.Size(), ModTime: info.ModTime()},
+			info:          couponsource.Info{Name: entry.Name(), Size: info.Size(), ModTime: info.ModTime()},
 			decompressors: fs.decompressors,
 		})
 	}
@@ -102,7 +106,7 @@ func (fs *FS) plan(sources int) readPlan {
 
 // Read streams the sources with one goroutine each, of which at most one per
 // core reads at a time. The first error cancels the rest.
-func (fs *FS) Read(ctx context.Context, sources []Source, out chan<- Chunk) error {
+func (fs *FS) Read(ctx context.Context, sources []couponsource.Source, out chan<- couponsource.Chunk) error {
 	plan := fs.plan(len(sources))
 	// The pool is the only source of chunk buffers, so it bounds the input
 	// in flight. Its capacity fits every buffer, so releasing never blocks.
@@ -134,7 +138,7 @@ func (fs *FS) Read(ctx context.Context, sources []Source, out chan<- Chunk) erro
 	return context.Cause(ctx)
 }
 
-func (fs *FS) readSource(ctx context.Context, index int, source Source, plan readPlan, pool chan []byte, out chan<- Chunk) error {
+func (fs *FS) readSource(ctx context.Context, index int, source couponsource.Source, plan readPlan, pool chan []byte, out chan<- couponsource.Chunk) error {
 	raw, err := source.Open()
 	if err != nil {
 		return err
@@ -168,7 +172,7 @@ func (fs *FS) readSource(ctx context.Context, index int, source Source, plan rea
 //
 // A line that fills a whole buffer cannot be sent whole, so it is skipped up
 // to its newline. At the end of the input, the last line needs no newline.
-func readChunks(ctx context.Context, r io.Reader, source int, pool chan []byte, out chan<- Chunk) error {
+func readChunks(ctx context.Context, r io.Reader, source int, pool chan []byte, out chan<- couponsource.Chunk) error {
 	var carry []byte
 	skipping := false // inside a line too long for a buffer
 	for {
@@ -223,7 +227,7 @@ func readChunks(ctx context.Context, r io.Reader, source int, pool chan []byte, 
 		// The consumer returns the buffer through Release; otherwise it
 		// goes straight back to the pool.
 		if end > start {
-			chunk := Chunk{Source: source, Lines: data[start:end], release: func() { pool <- buffer }}
+			chunk := couponsource.NewChunk(source, data[start:end], func() { pool <- buffer })
 			select {
 			case out <- chunk:
 			case <-ctx.Done():
@@ -259,11 +263,11 @@ func fill(r io.Reader, buffer []byte) (n int, done bool, err error) {
 // file is a Source in an FS folder.
 type file struct {
 	path          string
-	info          Info
+	info          couponsource.Info
 	decompressors []Decompressor
 }
 
-func (f *file) Info() Info { return f.info }
+func (f *file) Info() couponsource.Info { return f.info }
 
 func (f *file) Open() (io.ReadSeekCloser, error) { return os.Open(f.path) }
 

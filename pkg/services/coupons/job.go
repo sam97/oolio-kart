@@ -26,13 +26,6 @@ import (
 	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner"
 )
 
-// Locker keeps two runs, in this process or another, from building at once.
-type Locker interface {
-	// TryLock takes the lock if it is free. ok is false if another run
-	// holds it. unlock must be called once ok is true.
-	TryLock(ctx context.Context) (unlock func(), ok bool, err error)
-}
-
 // ScannerFor returns the scanner for one run's settings, and the rules string
 // its result is fingerprinted with.
 type ScannerFor func(settings models.CouponSettings) (scan scanner.Scanner, rules string, err error)
@@ -46,7 +39,7 @@ type Config struct {
 	Reader     couponsource.Reader
 	Store      couponstore.Store
 	Settings   couponstore.Settings
-	Locker     Locker
+	Locker     couponstore.Locker
 	ScannerFor ScannerFor
 	Logger     *slog.Logger
 }

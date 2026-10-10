@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v5"
+	"github.com/sam97/oolio-kart/pkg/models"
 )
 
 // maxBodyBytes caps request bodies. A full order of MaxItems lines is well
@@ -35,9 +36,14 @@ var errorTypes = map[int]string{
 	http.StatusServiceUnavailable:  "unavailable",
 }
 
+// unavailableRetryAfter is the Retry-After, in seconds, sent when a data
+// store cannot be reached.
+const unavailableRetryAfter = "5"
+
 // handleError renders every error as an ApiResponse. Errors that carry a
-// status (echo.HTTPError, router 404/405) keep it; anything else is a 500
-// whose details stay in the access log, not the response.
+// status (echo.HTTPError, router 404/405) keep it; an unreachable data store
+// is a 503; anything else is a 500 whose details stay in the access log, not
+// the response.
 func handleError(c *echo.Context, err error) {
 	if resp, _ := echo.UnwrapResponse(c.Response()); resp != nil && resp.Committed {
 		return
@@ -47,6 +53,10 @@ func handleError(c *echo.Context, err error) {
 	var message string
 	if httpErr, ok := errors.AsType[*echo.HTTPError](err); ok {
 		message = httpErr.Message
+	}
+	if errors.Is(err, models.ErrUnavailable) {
+		status, message = http.StatusServiceUnavailable, "temporarily unavailable, retry later"
+		c.Response().Header().Set(echo.HeaderRetryAfter, unavailableRetryAfter)
 	}
 	if status == 0 || status == http.StatusInternalServerError {
 		status, message = http.StatusInternalServerError, "internal server error"

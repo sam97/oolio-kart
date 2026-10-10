@@ -23,14 +23,13 @@ services:
       start_interval: 1s
     restart: unless-stopped
 
-  # One-shot: applies the database migrations.
+  # One-shot: creates and updates the tables, and seeds the product catalogue.
   migrate:
     build:
       context: .
       args:
-        CMD: cmd/coupons-job
-    image: oolio-kart/coupons-job
-    command: ["-migrate"]
+        CMD: cmd/migrate
+    image: oolio-kart/migrate
     depends_on:
       postgres:
         condition: service_healthy
@@ -103,8 +102,12 @@ services:
       args:
         CMD: api/kart-api
     image: oolio-kart/kart-api
-    # Deliberately no depends_on: the API starts and serves orders without
-    # coupons while the database is down or the first build is running.
+    # Starts once the tables exist. It does not wait for coupons: orders
+    # without a coupon work while the first build runs, and requests that
+    # need the database answer 503 while it is down.
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     # Optional staging/production overrides: ENV_FILE=staging.env docker compose up
     env_file:
       - path: ${ENV_FILE:-.env.none}

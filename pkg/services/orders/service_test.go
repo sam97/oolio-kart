@@ -3,12 +3,11 @@ package orders
 import (
 	"context"
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/sam97/oolio-kart/pkg/datasources/orderstore"
-	"github.com/sam97/oolio-kart/pkg/datasources/productstore"
 	"github.com/sam97/oolio-kart/pkg/models"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/validator"
 )
@@ -26,12 +25,44 @@ func (f *fakeCoupons) Validate(_ context.Context, code string) (models.Coupon, e
 	return models.Coupon{Code: code, DiscountPercent: 10}, nil
 }
 
-func newTestService(coupons validator.Validator) (*Service, *orderstore.Memory) {
-	products := productstore.NewMemory([]models.Product{
-		{ID: "1", Name: "Waffle", Price: 650},
-		{ID: "2", Name: "Brownie", Price: 455},
-	})
-	orders := orderstore.NewMemory()
+// fakeProducts is a productstore.Store over a map.
+type fakeProducts map[string]models.Product
+
+func (f fakeProducts) List(context.Context) ([]models.Product, error) {
+	return slices.Collect(maps.Values(f)), nil
+}
+
+func (f fakeProducts) Get(_ context.Context, id string) (models.Product, error) {
+	if product, found := f[id]; found {
+		return product, nil
+	}
+	return models.Product{}, models.ErrProductNotFound
+}
+
+func (f fakeProducts) GetMany(_ context.Context, ids []string) (map[string]models.Product, error) {
+	found := map[string]models.Product{}
+	for _, id := range ids {
+		if product, ok := f[id]; ok {
+			found[id] = product
+		}
+	}
+	return found, nil
+}
+
+// fakeOrders is an orderstore.Store that keeps orders by id.
+type fakeOrders map[string]models.Order
+
+func (f fakeOrders) Save(_ context.Context, order models.Order) error {
+	f[order.ID] = order
+	return nil
+}
+
+func newTestService(coupons validator.Validator) (*Service, fakeOrders) {
+	products := fakeProducts{
+		"1": {ID: "1", Name: "Waffle", Price: 650},
+		"2": {ID: "2", Name: "Brownie", Price: 455},
+	}
+	orders := fakeOrders{}
 	service := NewService(products, orders, coupons)
 	service.newID = func() (string, error) { return "order-1", nil }
 	return service, orders
@@ -58,13 +89,13 @@ func TestPlacePricesOrder(t *testing.T) {
 	if !slices.Equal(ids, []string{"1", "2"}) {
 		t.Errorf("product ids = %v, want unique ids in first-seen order", ids)
 	}
-	if _, saved := orders.Get(t.Context(), "order-1"); !saved {
+	if _, saved := orders["order-1"]; !saved {
 		t.Error("order was not saved")
 	}
 }
 
 func TestPlaceAppliesCoupon(t *testing.T) {
-	service, _ := newTestService(&fakeCoupons{})
+	service, orders := newTestService(&fakeCoupons{})
 
 	// subtotal 2405: 10% is 240.5, rounded half up to 241.
 	placed, err := service.Place(t.Context(), models.OrderRequest{CouponCode: "HAPPYHRS", Items: []models.OrderItem{item("1", 3), item("2", 1)}})
@@ -73,6 +104,9 @@ func TestPlaceAppliesCoupon(t *testing.T) {
 	}
 	if placed.Discounts != 241 || placed.Total != 2405-241 {
 		t.Errorf("discounts = %d, total = %d; want 241, %d", placed.Discounts, placed.Total, 2405-241)
+	}
+	if saved := orders["order-1"]; saved.CouponCode != "HAPPYHRS" {
+		t.Errorf("saved coupon code = %q, want HAPPYHRS", saved.CouponCode)
 	}
 }
 
@@ -139,7 +173,7 @@ func TestPlaceCouponErrors(t *testing.T) {
 	if _, err := service.Place(t.Context(), models.OrderRequest{CouponCode: "HAPPYHRS", Items: items}); !errors.Is(err, models.ErrCouponUnavailable) {
 		t.Errorf("unavailable coupon err = %v", err)
 	}
-	if _, saved := orders.Get(t.Context(), "order-1"); saved {
+	if _, saved := orders["order-1"]; saved {
 		t.Error("order saved although the coupon could not be checked")
 	}
 

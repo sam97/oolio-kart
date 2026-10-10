@@ -1,4 +1,4 @@
-package validator
+package couponstore
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/sam97/oolio-kart/pkg/datasources/cache"
-	"github.com/sam97/oolio-kart/pkg/datasources/couponstore"
 	"github.com/sam97/oolio-kart/pkg/models"
 )
 
@@ -15,14 +14,14 @@ import (
 // Answers from before the first build, and failures, are never cached. Cache
 // failures are logged and the lookup falls through.
 type CachedLookup struct {
-	next        couponstore.Lookup
+	next        Lookup
 	cache       cache.Cache
 	ttl         time.Duration
 	negativeTTL time.Duration
 	logger      *slog.Logger
 }
 
-func NewCachedLookup(next couponstore.Lookup, store cache.Cache, ttl, negativeTTL time.Duration, logger *slog.Logger) *CachedLookup {
+func NewCachedLookup(next Lookup, store cache.Cache, ttl, negativeTTL time.Duration, logger *slog.Logger) *CachedLookup {
 	return &CachedLookup{next: next, cache: store, ttl: ttl, negativeTTL: negativeTTL, logger: logger}
 }
 
@@ -61,13 +60,13 @@ func (c *CachedLookup) Bust(ctx context.Context) error {
 // CachedSettings remembers the coupon settings for ttl; a ttl of 0 disables
 // caching. Cache failures are logged and the settings are read again.
 type CachedSettings struct {
-	next   couponstore.Settings
+	next   Settings
 	cache  cache.Cache
 	ttl    time.Duration
 	logger *slog.Logger
 }
 
-func NewCachedSettings(next couponstore.Settings, store cache.Cache, ttl time.Duration, logger *slog.Logger) *CachedSettings {
+func NewCachedSettings(next Settings, store cache.Cache, ttl time.Duration, logger *slog.Logger) *CachedSettings {
 	return &CachedSettings{next: next, cache: store, ttl: ttl, logger: logger}
 }
 

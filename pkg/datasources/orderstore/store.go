@@ -8,5 +8,6 @@ import (
 )
 
 type Store interface {
+	// Save stores the order and its items, all or nothing.
 	Save(ctx context.Context, order models.Order) error
 }

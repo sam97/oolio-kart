@@ -1,4 +1,4 @@
-package couponsource
+package files
 
 import (
 	"bytes"
@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/sam97/oolio-kart/pkg/datasources/couponsource"
 )
 
 // TestReadChunksBoundaries feeds lines of every length through buffers of
@@ -47,7 +49,7 @@ func readAll(t *testing.T, r io.Reader, size int) []string {
 	pool := make(chan []byte, 2)
 	pool <- make([]byte, size)
 	pool <- make([]byte, size)
-	out := make(chan Chunk)
+	out := make(chan couponsource.Chunk)
 	var err error
 	go func() {
 		err = readChunks(t.Context(), r, 0, pool, out)
@@ -118,7 +120,7 @@ func TestReadErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := make(chan Chunk)
+	out := make(chan couponsource.Chunk)
 	done := make(chan error)
 	go func() { done <- fs.Read(t.Context(), sources, out) }()
 	go func() {
@@ -144,7 +146,7 @@ func TestReadCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	// Nobody receives from out: Read must still return.
-	if err := fs.Read(ctx, sources, make(chan Chunk)); !errors.Is(err, context.Canceled) {
+	if err := fs.Read(ctx, sources, make(chan couponsource.Chunk)); !errors.Is(err, context.Canceled) {
 		t.Errorf("Read = %v, want context.Canceled", err)
 	}
 }
@@ -171,9 +173,9 @@ func TestPlanStaysInBudget(t *testing.T) {
 	}
 }
 
-func readSources(t *testing.T, reader Reader, sources []Source) map[int]string {
+func readSources(t *testing.T, reader couponsource.Reader, sources []couponsource.Source) map[int]string {
 	t.Helper()
-	out := make(chan Chunk)
+	out := make(chan couponsource.Chunk)
 	var mu sync.Mutex
 	got := map[int]string{}
 	go func() {
@@ -191,7 +193,7 @@ func readSources(t *testing.T, reader Reader, sources []Source) map[int]string {
 	return got
 }
 
-func names(sources []Source) []string {
+func names(sources []couponsource.Source) []string {
 	var names []string
 	for _, source := range sources {
 		names = append(names, source.Info().Name)

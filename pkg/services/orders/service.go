@@ -41,18 +41,25 @@ func (s *Service) Place(ctx context.Context, req models.OrderRequest) (models.Or
 		return models.Order{}, &models.ValidationError{Problems: problems}
 	}
 
+	// One lookup for every product in the order.
+	ids := make([]string, len(req.Items))
+	for index, item := range req.Items {
+		ids[index] = item.ProductID
+	}
+	catalogue, err := s.products.GetMany(ctx, ids)
+	if err != nil {
+		return models.Order{}, fmt.Errorf("look up products: %w", err)
+	}
+
 	var subtotal models.Cents
 	var products []models.Product
 	var problems []string
 	seen := map[string]bool{}
 	for index, item := range req.Items {
-		found, err := s.products.Get(ctx, item.ProductID)
-		if errors.Is(err, models.ErrProductNotFound) {
+		found, ok := catalogue[item.ProductID]
+		if !ok {
 			problems = append(problems, fmt.Sprintf("items[%d].productId: product %q not found", index, item.ProductID))
 			continue
-		}
-		if err != nil {
-			return models.Order{}, err
 		}
 		subtotal += found.Price * models.Cents(item.Quantity)
 		if !seen[found.ID] {
@@ -81,11 +88,12 @@ func (s *Service) Place(ctx context.Context, req models.OrderRequest) (models.Or
 		return models.Order{}, fmt.Errorf("generate order id: %w", err)
 	}
 	placed := models.Order{
-		ID:        id,
-		Total:     subtotal - discounts,
-		Discounts: discounts,
-		Items:     req.Items,
-		Products:  products,
+		ID:         id,
+		Total:      subtotal - discounts,
+		Discounts:  discounts,
+		Items:      req.Items,
+		Products:   products,
+		CouponCode: req.CouponCode,
 	}
 	if err := s.orders.Save(ctx, placed); err != nil {
 		return models.Order{}, fmt.Errorf("save order: %w", err)

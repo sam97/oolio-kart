@@ -1,4 +1,4 @@
-package couponstore
+package postgres_test
 
 import (
 	"context"
@@ -10,21 +10,23 @@ import (
 	"time"
 
 	"github.com/sam97/oolio-kart/pkg/datasources/couponsource"
-	"github.com/sam97/oolio-kart/pkg/datasources/postgres/postgrestest"
+	"github.com/sam97/oolio-kart/pkg/datasources/couponstore"
+	"github.com/sam97/oolio-kart/pkg/datasources/internal/datastores/postgres"
+	"github.com/sam97/oolio-kart/pkg/datasources/internal/datastores/postgres/postgrestest"
 	"github.com/sam97/oolio-kart/pkg/models"
 )
 
 var modTime = time.Date(2026, 10, 10, 9, 30, 0, 123456789, time.UTC)
 
-func manifestFor(rules string, names ...string) Manifest {
-	m := Manifest{Fingerprint: Fingerprint{Rules: rules}, Layout: Layout{Hash: "splitmix64", Buckets: 1}}
+func manifestFor(rules string, names ...string) couponstore.Manifest {
+	m := couponstore.Manifest{Fingerprint: couponstore.Fingerprint{Rules: rules}, Layout: couponstore.Layout{Hash: "splitmix64", Buckets: 1}}
 	for _, name := range names {
 		m.Sources = append(m.Sources, couponsource.Info{Name: name, Size: 100, ModTime: modTime})
 	}
 	return m
 }
 
-func publish(t *testing.T, store *Postgres, manifest Manifest, codes ...string) {
+func publish(t *testing.T, store *postgres.Coupons, manifest couponstore.Manifest, codes ...string) {
 	t.Helper()
 	batch, err := store.Begin(t.Context())
 	if err != nil {
@@ -41,7 +43,7 @@ func publish(t *testing.T, store *Postgres, manifest Manifest, codes ...string) 
 	}
 }
 
-func contains(t *testing.T, store *Postgres, code string) (valid, published bool) {
+func contains(t *testing.T, store *postgres.Coupons, code string) (valid, published bool) {
 	t.Helper()
 	valid, published, err := store.Contains(t.Context(), code)
 	if err != nil {
@@ -51,7 +53,8 @@ func contains(t *testing.T, store *Postgres, code string) (valid, published bool
 }
 
 func TestPostgresPublish(t *testing.T) {
-	store := NewPostgres(postgrestest.New(t))
+	pool := postgrestest.New(t)
+	store := postgres.NewCoupons(pool)
 	ctx := t.Context()
 
 	if _, found, err := store.Published(ctx); err != nil || found {
@@ -84,9 +87,9 @@ func TestPostgresPublish(t *testing.T) {
 		t.Errorf("Published = %+v, want %+v", fp, second.Fingerprint)
 	}
 
-	var layout Layout
+	var layout couponstore.Layout
 	var raw []byte
-	if err := store.pool.QueryRow(ctx, "SELECT layout FROM coupon_manifest").Scan(&raw); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT layout FROM coupon_manifest").Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	if err := json.Unmarshal(raw, &layout); err != nil || layout.Hash != "splitmix64" {
@@ -95,7 +98,8 @@ func TestPostgresPublish(t *testing.T) {
 }
 
 func TestPostgresAbort(t *testing.T) {
-	store := NewPostgres(postgrestest.New(t))
+	pool := postgrestest.New(t)
+	store := postgres.NewCoupons(pool)
 	publish(t, store, manifestFor("rules", "a.gz"), "HAPPYHRS")
 
 	batch, err := store.Begin(t.Context())
@@ -103,7 +107,7 @@ func TestPostgresAbort(t *testing.T) {
 		t.Fatal(err)
 	}
 	// More than one flush, so some codes reach the database before Abort.
-	for i := range flushSize + 10 {
+	for i := range 4096 + 10 {
 		if err := batch.Add(fmt.Sprintf("CODE%04d", i)); err != nil {
 			t.Fatal(err)
 		}
@@ -121,7 +125,8 @@ func TestPostgresAbort(t *testing.T) {
 // TestPostgresReadersNeverSeeAMix publishes over and over while readers look
 // codes up: each reader sees one whole set, never none or both.
 func TestPostgresReadersNeverSeeAMix(t *testing.T) {
-	store := NewPostgres(postgrestest.New(t))
+	pool := postgrestest.New(t)
+	store := postgres.NewCoupons(pool)
 	publish(t, store, manifestFor("rules", "a.gz"), "SETAAAA1", "SETAAAA2")
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -131,7 +136,7 @@ func TestPostgresReadersNeverSeeAMix(t *testing.T) {
 		wg.Go(func() {
 			for ctx.Err() == nil {
 				var inA, inB int
-				err := store.pool.QueryRow(ctx, `SELECT
+				err := pool.QueryRow(ctx, `SELECT
 					count(*) FILTER (WHERE code LIKE 'SETA%'),
 					count(*) FILTER (WHERE code LIKE 'SETB%')
 					FROM coupon_codes`).Scan(&inA, &inB)
@@ -163,7 +168,8 @@ func TestPostgresReadersNeverSeeAMix(t *testing.T) {
 }
 
 func TestPostgresSettings(t *testing.T) {
-	store := NewPostgres(postgrestest.New(t))
+	pool := postgrestest.New(t)
+	store := postgres.NewCoupons(pool)
 	got, err := store.Settings(t.Context())
 	want := models.CouponSettings{MinLength: 8, MaxLength: 10, MinFiles: 2, DiscountPercent: 10}
 	if err != nil || got != want {
@@ -177,7 +183,7 @@ func TestPostgresSettings(t *testing.T) {
 		"UPDATE coupon_settings SET min_files = 0",
 		"UPDATE coupon_settings SET discount_percent = 101",
 	} {
-		if _, err := store.pool.Exec(t.Context(), update); err == nil {
+		if _, err := pool.Exec(t.Context(), update); err == nil {
 			t.Errorf("%s succeeded", update)
 		}
 	}

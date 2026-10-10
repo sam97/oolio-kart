@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 
-# Builds one binary, chosen by its path with --build-arg CMD=api/kart-api or
-# CMD=cmd/coupons-job, into a distroless image that runs as a non-root user.
+# Builds one binary, chosen by its path with --build-arg CMD=api/kart-api,
+# CMD=cmd/coupons-job or CMD=cmd/migrate, into a distroless image that runs as
+# a non-root user.
 # The image carries .env.defaults; override settings with environment
 # variables or an ENV_FILE.
 

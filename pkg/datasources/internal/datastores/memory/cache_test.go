@@ -1,13 +1,15 @@
-package cache
+package memory
 
 import (
 	"testing"
 	"time"
+
+	"github.com/sam97/oolio-kart/pkg/datasources/cache"
 )
 
-func newTestMemory(t *testing.T, maxEntries int) (*Memory, *time.Time) {
+func newTestCache(t *testing.T, maxEntries int) (*Cache, *time.Time) {
 	t.Helper()
-	mem, err := NewMemory(maxEntries)
+	mem, err := NewCache(maxEntries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -16,9 +18,9 @@ func newTestMemory(t *testing.T, maxEntries int) (*Memory, *time.Time) {
 	return mem, &now
 }
 
-func TestMemoryExpiry(t *testing.T) {
+func TestCacheExpiry(t *testing.T) {
 	ctx := t.Context()
-	mem, now := newTestMemory(t, 10)
+	mem, now := newTestCache(t, 10)
 
 	mem.Set(ctx, "short", []byte("a"), time.Minute)
 	mem.Set(ctx, "forever", []byte("b"), 0)
@@ -41,9 +43,9 @@ func TestMemoryExpiry(t *testing.T) {
 	}
 }
 
-func TestMemoryEvictsLeastRecentlyUsed(t *testing.T) {
+func TestCacheEvictsLeastRecentlyUsed(t *testing.T) {
 	ctx := t.Context()
-	mem, _ := newTestMemory(t, 2)
+	mem, _ := newTestCache(t, 2)
 
 	mem.Set(ctx, "a", []byte("1"), 0)
 	mem.Set(ctx, "b", []byte("2"), 0)
@@ -60,9 +62,9 @@ func TestMemoryEvictsLeastRecentlyUsed(t *testing.T) {
 	}
 }
 
-func TestMemoryCopiesValues(t *testing.T) {
+func TestCacheCopiesValues(t *testing.T) {
 	ctx := t.Context()
-	mem, _ := newTestMemory(t, 2)
+	mem, _ := newTestCache(t, 2)
 
 	value := []byte("abc")
 	mem.Set(ctx, "key", value, 0)
@@ -78,27 +80,27 @@ func TestMemoryCopiesValues(t *testing.T) {
 
 func TestJSONHelpers(t *testing.T) {
 	ctx := t.Context()
-	mem, _ := newTestMemory(t, 2)
+	mem, _ := newTestCache(t, 2)
 
 	type payload struct {
 		Name  string
 		Count int
 	}
-	if err := SetJSON(ctx, mem, "key", payload{"x", 3}, 0); err != nil {
+	if err := cache.SetJSON(ctx, mem, "key", payload{"x", 3}, 0); err != nil {
 		t.Fatal(err)
 	}
-	got, found, err := GetJSON[payload](ctx, mem, "key")
+	got, found, err := cache.GetJSON[payload](ctx, mem, "key")
 	if err != nil || !found || got != (payload{"x", 3}) {
 		t.Errorf("GetJSON = %+v, %v, %v", got, found, err)
 	}
-	if _, found, err := GetJSON[payload](ctx, mem, "missing"); found || err != nil {
+	if _, found, err := cache.GetJSON[payload](ctx, mem, "missing"); found || err != nil {
 		t.Errorf("GetJSON(missing) = %v, %v", found, err)
 	}
 }
 
-func TestMemoryPurge(t *testing.T) {
+func TestCachePurge(t *testing.T) {
 	ctx := t.Context()
-	mem, _ := newTestMemory(t, 4)
+	mem, _ := newTestCache(t, 4)
 	mem.Set(ctx, "a", []byte("1"), 0)
 	mem.Set(ctx, "b", []byte("2"), time.Minute)
 	if err := mem.Purge(ctx); err != nil {

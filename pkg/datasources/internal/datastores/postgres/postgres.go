@@ -1,17 +1,22 @@
-// Package postgres opens the Postgres pool, applies the schema migrations,
-// and takes advisory locks.
+// Package postgres keeps the app's data in Postgres: the schema migrations,
+// and the products, orders and coupon stores.
 package postgres
 
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
+
+	"github.com/sam97/oolio-kart/pkg/models"
 )
 
 //go:embed migrations/*.sql
@@ -45,8 +50,23 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 	_, err = provider.Up(ctx)
-	return err
+	return classify(err)
 }
+
+// classify marks errors that mean the database could not be reached, such as
+// a refused connection or a timeout, with models.ErrUnavailable. Errors the
+// server returned for a statement, and pgx.ErrNoRows, are left as they are.
+func classify(err error) error {
+	var serverErr *pgconn.PgError
+	if err == nil || errors.As(err, &serverErr) || errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", models.ErrUnavailable, err)
+}
+
+// buildLockKey names the advisory lock that keeps two coupon builds from
+// running at once.
+const buildLockKey = 0x636f75706f6e73 // "coupons"
 
 // Lock is a Postgres session-level advisory lock. The lock lives on one
 // connection, so a crashed holder releases it when its connection drops.
@@ -59,16 +79,21 @@ func NewLock(pool *pgxpool.Pool, key int64) *Lock {
 	return &Lock{pool: pool, key: key}
 }
 
+// NewBuildLock returns the lock coupon builds take.
+func NewBuildLock(pool *pgxpool.Pool) *Lock {
+	return NewLock(pool, buildLockKey)
+}
+
 // TryLock takes the lock if it is free. ok is false if another session holds
 // it. unlock releases it and must be called once ok is true.
 func (l *Lock) TryLock(ctx context.Context) (unlock func(), ok bool, err error) {
 	conn, err := l.pool.Acquire(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, false, classify(err)
 	}
 	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", l.key).Scan(&ok); err != nil || !ok {
 		conn.Release()
-		return nil, false, err
+		return nil, false, classify(err)
 	}
 	unlock = func() {
 		// Unlock even if the caller's context is done. If it fails, the

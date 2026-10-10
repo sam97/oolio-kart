@@ -14,16 +14,13 @@ import (
 	"syscall"
 
 	"github.com/labstack/echo/v5"
-	"github.com/sam97/oolio-kart/pkg/datasources/cache"
-	"github.com/sam97/oolio-kart/pkg/datasources/couponstore"
-	"github.com/sam97/oolio-kart/pkg/datasources/orderstore"
-	"github.com/sam97/oolio-kart/pkg/datasources/postgres"
-	"github.com/sam97/oolio-kart/pkg/datasources/productstore"
+	"github.com/sam97/oolio-kart/pkg/datasources"
 	"github.com/sam97/oolio-kart/pkg/handlers/kartapi"
 	"github.com/sam97/oolio-kart/pkg/helpers/healthcheck"
 	"github.com/sam97/oolio-kart/pkg/helpers/logging"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/validator"
 	"github.com/sam97/oolio-kart/pkg/services/orders"
+	"github.com/sam97/oolio-kart/pkg/services/products"
 )
 
 // openAPI is the API's OpenAPI 3.1 document, served at /api/openapi.yaml.
@@ -66,33 +63,33 @@ func serve() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	memory, err := cache.NewMemory(cfg.CacheMaxEntries)
-	if err != nil {
-		return fmt.Errorf("create cache: %w", err)
-	}
-	// The pool connects lazily: while the database is down, orders without
-	// coupons still work and coupon checks answer unavailable.
-	pool, err := postgres.Open(ctx, cfg.DatabaseURL)
+	// Stores connect lazily: while they are down, requests that need them
+	// answer 503 and the server keeps running.
+	stores, err := datasources.Open(ctx, datasources.Config{
+		DatabaseURL: cfg.DatabaseURL,
+		Cache: datasources.CacheConfig{
+			MaxEntries:        cfg.CacheMaxEntries,
+			CouponTTL:         cfg.CouponCacheTTL,
+			CouponNegativeTTL: cfg.CouponNegativeCacheTTL,
+			SettingsTTL:       cfg.CouponSettingsCacheTTL,
+		},
+		Logger: logger,
+	})
 	if err != nil {
 		return err
 	}
-	defer pool.Close()
-	store := couponstore.NewPostgres(pool)
-	coupons := validator.NewStore(
-		validator.NewCachedLookup(store, memory, cfg.CouponCacheTTL, cfg.CouponNegativeCacheTTL, logger),
-		validator.NewCachedSettings(store, memory, cfg.CouponSettingsCacheTTL, logger),
-		cfg.CouponsQueryTimeout,
-	)
+	defer stores.Close()
 
-	products := productstore.NewMemory(productstore.Demo())
-	orderService := orders.NewService(products, orderstore.NewMemory(), coupons)
+	catalogue := products.NewService(stores.Products)
+	coupons := validator.NewStore(stores.CouponLookup, stores.CouponSettings, cfg.CouponsQueryTimeout)
+	orderService := orders.NewService(stores.Products, stores.Orders, coupons)
 
 	var ready atomic.Bool
 	ready.Store(true)
 
 	router := kartapi.NewRouter(kartapi.Options{
 		Logger:             logger,
-		Products:           products,
+		Products:           catalogue,
 		Orders:             orderService,
 		Coupons:            coupons,
 		APIKeys:            cfg.APIKeys,

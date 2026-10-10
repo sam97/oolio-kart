@@ -16,10 +16,10 @@ import (
 
 	"github.com/dustin/go-humanize"
 
+	"github.com/sam97/oolio-kart/pkg/datasources"
 	"github.com/sam97/oolio-kart/pkg/datasources/couponsource"
 	"github.com/sam97/oolio-kart/pkg/datasources/couponstore"
-	"github.com/sam97/oolio-kart/pkg/datasources/postgres"
-	"github.com/sam97/oolio-kart/pkg/datasources/postgres/postgrestest"
+	"github.com/sam97/oolio-kart/pkg/datasources/datasourcestest"
 	envconfig "github.com/sam97/oolio-kart/pkg/helpers/config"
 	"github.com/sam97/oolio-kart/pkg/models"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/codec"
@@ -114,7 +114,7 @@ func (l *memoryLock) TryLock(context.Context) (func(), bool, error) {
 func newJob(t *testing.T, dir string, store *memoryStore) *Job {
 	t.Helper()
 	job, err := NewDefault(Options{
-		Dir:         dir,
+		Files:       datasources.CouponFiles(dir),
 		BucketDir:   t.TempDir(),
 		MemoryLimit: MinMemoryLimit,
 		Store:       store,
@@ -290,20 +290,19 @@ func waitForCodes(t *testing.T, store *memoryStore, want []string) {
 	}
 }
 
-// TestJobPostgres runs the default pipeline against Postgres.
-func TestJobPostgres(t *testing.T) {
-	pool := postgrestest.New(t)
+// TestJobDatabase runs the default pipeline against the real data stores.
+func TestJobDatabase(t *testing.T) {
+	stores := datasourcestest.Open(t, datasources.CacheConfig{})
 	dir := t.TempDir()
 	writeFile(t, dir, "a.txt", "HAPPYHRS\nFIFTYOFF\n")
 	writeFile(t, dir, "b.txt", "HAPPYHRS\n")
-	store := couponstore.NewPostgres(pool)
 	job, err := NewDefault(Options{
-		Dir:         dir,
+		Files:       datasources.CouponFiles(dir),
 		BucketDir:   t.TempDir(),
 		MemoryLimit: MinMemoryLimit,
-		Store:       store,
-		Settings:    store,
-		Locker:      postgres.NewLock(pool, 1),
+		Store:       stores.Coupons,
+		Settings:    stores.CouponSettings,
+		Locker:      stores.BuildLock,
 		Logger:      slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
@@ -312,7 +311,7 @@ func TestJobPostgres(t *testing.T) {
 	runOnce(t, job, Built)
 	runOnce(t, job, Unchanged)
 	for code, want := range map[string]bool{"HAPPYHRS": true, "FIFTYOFF": false} {
-		if valid, published, err := store.Contains(t.Context(), code); err != nil || !published || valid != want {
+		if valid, published, err := stores.CouponLookup.Contains(t.Context(), code); err != nil || !published || valid != want {
 			t.Errorf("Contains(%s) = %v, %v, %v; want %v", code, valid, published, err, want)
 		}
 	}
@@ -321,7 +320,7 @@ func TestJobPostgres(t *testing.T) {
 func TestNewDefaultRejectsSmallMemoryLimit(t *testing.T) {
 	store := newMemoryStore()
 	_, err := NewDefault(Options{
-		Dir:         t.TempDir(),
+		Files:       datasources.CouponFiles(t.TempDir()),
 		BucketDir:   t.TempDir(),
 		MemoryLimit: MinMemoryLimit - 1,
 		Store:       store,
@@ -364,7 +363,7 @@ func TestBaseFiles(t *testing.T) {
 	}
 
 	budget := NewBudget(int64(limit))
-	reader := couponsource.NewFS(dir, budget.Reader, couponsource.NewGzip())
+	reader := datasources.CouponFiles(dir)(budget.Reader)
 	sources, err := reader.List(t.Context())
 	if err != nil || len(sources) < 3 {
 		t.Skipf("copy couponbase1, couponbase2 and couponbase3 (.txt or .gz) into %s/ to run this test", dir)

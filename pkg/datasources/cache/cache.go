@@ -1,7 +1,7 @@
 // Package cache defines a byte-oriented key/value cache with per-entry expiry.
 //
 // The interface mirrors what Redis offers (GET, SET with EX, DEL) so that the
-// in-memory implementation can be swapped for a Redis-backed one without
+// in-memory implementation can be swapped for a Redis or Valkey one without
 // touching callers.
 package cache
 

@@ -12,4 +12,8 @@ type Store interface {
 
 	// Get returns models.ErrProductNotFound when no product has the given id.
 	Get(ctx context.Context, id string) (models.Product, error)
+
+	// GetMany returns the products with the given ids, keyed by id. Ids with
+	// no product are left out.
+	GetMany(ctx context.Context, ids []string) (map[string]models.Product, error)
 }

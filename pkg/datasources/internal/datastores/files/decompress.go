@@ -1,4 +1,4 @@
-package couponsource
+package files
 
 import (
 	"bytes"

@@ -1,4 +1,4 @@
-package couponstore
+package postgres
 
 import (
 	"context"
@@ -9,17 +9,18 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/sam97/oolio-kart/pkg/datasources/couponstore"
 	"github.com/sam97/oolio-kart/pkg/models"
 )
 
-// Postgres keeps the codes in the tables of package postgres's migrations.
-// It is a Store, a Lookup and Settings.
-type Postgres struct {
+// Coupons keeps the published codes, their manifest and the coupon settings.
+// It is a couponstore.Store, Lookup and Settings.
+type Coupons struct {
 	pool *pgxpool.Pool
 }
 
-func NewPostgres(pool *pgxpool.Pool) *Postgres {
-	return &Postgres{pool: pool}
+func NewCoupons(pool *pgxpool.Pool) *Coupons {
+	return &Coupons{pool: pool}
 }
 
 // flushSize is how many codes a Batch buffers before copying them to the
@@ -29,25 +30,25 @@ const flushSize = 4096
 // Begin opens the transaction the batch commits in. Codes are copied into a
 // temporary table first; Commit swaps them in, so readers keep seeing the
 // previous codes until then.
-func (p *Postgres) Begin(ctx context.Context) (Batch, error) {
-	tx, err := p.pool.Begin(ctx)
+func (c *Coupons) Begin(ctx context.Context) (couponstore.Batch, error) {
+	tx, err := c.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, classify(err)
 	}
 	if _, err := tx.Exec(ctx, "CREATE TEMPORARY TABLE staged_codes (code text NOT NULL) ON COMMIT DROP"); err != nil {
 		tx.Rollback(ctx)
-		return nil, err
+		return nil, classify(err)
 	}
-	return &postgresBatch{ctx: ctx, tx: tx}, nil
+	return &couponBatch{ctx: ctx, tx: tx}, nil
 }
 
-type postgresBatch struct {
+type couponBatch struct {
 	ctx     context.Context // Begin's, since Add takes none
 	tx      pgx.Tx
 	pending [][]any
 }
 
-func (b *postgresBatch) Add(code string) error {
+func (b *couponBatch) Add(code string) error {
 	b.pending = append(b.pending, []any{code})
 	if len(b.pending) < flushSize {
 		return nil
@@ -55,16 +56,16 @@ func (b *postgresBatch) Add(code string) error {
 	return b.flush(b.ctx)
 }
 
-func (b *postgresBatch) flush(ctx context.Context) error {
+func (b *couponBatch) flush(ctx context.Context) error {
 	if len(b.pending) == 0 {
 		return nil
 	}
 	_, err := b.tx.CopyFrom(ctx, pgx.Identifier{"staged_codes"}, []string{"code"}, pgx.CopyFromRows(b.pending))
 	b.pending = b.pending[:0]
-	return err
+	return classify(err)
 }
 
-func (b *postgresBatch) Commit(ctx context.Context, manifest Manifest) error {
+func (b *couponBatch) Commit(ctx context.Context, manifest couponstore.Manifest) error {
 	if err := b.flush(ctx); err != nil {
 		return err
 	}
@@ -97,48 +98,48 @@ func (b *postgresBatch) Commit(ctx context.Context, manifest Manifest) error {
 	}
 	for _, statement := range statements {
 		if _, err := b.tx.Exec(ctx, statement.sql, statement.args...); err != nil {
-			return err
+			return classify(err)
 		}
 	}
-	return b.tx.Commit(ctx)
+	return classify(b.tx.Commit(ctx))
 }
 
-func (b *postgresBatch) Abort() {
+func (b *couponBatch) Abort() {
 	// A no-op once committed. Rolls back even if Begin's context is done.
 	b.tx.Rollback(context.Background())
 }
 
-func (p *Postgres) Published(ctx context.Context) (Fingerprint, bool, error) {
-	var fp Fingerprint
+func (c *Coupons) Published(ctx context.Context) (couponstore.Fingerprint, bool, error) {
+	var fp couponstore.Fingerprint
 	var sources []byte
-	err := p.pool.QueryRow(ctx, "SELECT rules, sources FROM coupon_manifest").Scan(&fp.Rules, &sources)
+	err := c.pool.QueryRow(ctx, "SELECT rules, sources FROM coupon_manifest").Scan(&fp.Rules, &sources)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Fingerprint{}, false, nil
+		return couponstore.Fingerprint{}, false, nil
 	}
 	if err != nil {
-		return Fingerprint{}, false, err
+		return couponstore.Fingerprint{}, false, classify(err)
 	}
 	if err := json.Unmarshal(sources, &fp.Sources); err != nil {
-		return Fingerprint{}, false, fmt.Errorf("decode manifest sources: %w", err)
+		return couponstore.Fingerprint{}, false, fmt.Errorf("decode manifest sources: %w", err)
 	}
 	return fp, true, nil
 }
 
-func (p *Postgres) Contains(ctx context.Context, code string) (valid, published bool, err error) {
-	err = p.pool.QueryRow(ctx,
+func (c *Coupons) Contains(ctx context.Context, code string) (valid, published bool, err error) {
+	err = c.pool.QueryRow(ctx,
 		"SELECT EXISTS (SELECT 1 FROM coupon_codes WHERE code = $1), EXISTS (SELECT 1 FROM coupon_manifest)",
 		code,
 	).Scan(&valid, &published)
-	return valid, published, err
+	return valid, published, classify(err)
 }
 
-func (p *Postgres) Settings(ctx context.Context) (models.CouponSettings, error) {
+func (c *Coupons) Settings(ctx context.Context) (models.CouponSettings, error) {
 	var s models.CouponSettings
-	err := p.pool.QueryRow(ctx,
+	err := c.pool.QueryRow(ctx,
 		"SELECT min_length, max_length, min_files, discount_percent FROM coupon_settings",
 	).Scan(&s.MinLength, &s.MaxLength, &s.MinFiles, &s.DiscountPercent)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s, errors.New("coupon_settings has no row")
 	}
-	return s, err
+	return s, classify(err)
 }
