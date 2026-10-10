@@ -12,11 +12,11 @@ The [Oolio advanced backend challenge](https://github.com/oolio-group/kart-chall
 - validates promo codes: a code is valid if it is 8–10 characters long and appears in at least two of the three coupon base files (`couponbase1.gz`, `couponbase2.gz`, `couponbase3.gz`)
 - is robust, using best judgement for the edge cases the demo server leaves out
 
-> **Discount:** the brief defines which codes are valid but not what discount a valid code gives. This implementation therefore applies a flat 10% off the subtotal for every valid code. The percentage can be changed with `COUPONS_DISCOUNT_PERCENT` on the coupons server, and per-coupon rules could be added later (see [ARCHITECTURE.md](ARCHITECTURE.md#how-kart-api-uses-it-internalcouponclient)).
+> **Discount:** the brief defines which codes are valid but not what discount a valid code gives. This implementation therefore applies a flat 10% off the subtotal for every valid code. The percentage can be changed with `COUPONS_DISCOUNT_PERCENT` on the coupons server, and per-coupon rules could be added later (see [ARCHITECTURE.md](ARCHITECTURE.md#how-kart-api-uses-it-pkgdatasourcescouponclient)).
 
 ## This implementation
 
-A Go implementation of the Oolio food-ordering API ([api/openapi.yaml](api/openapi.yaml)). It includes promo-code validation against the three coupon base files. The work is split into two services:
+A Go implementation of the Oolio food-ordering API ([api/kart-api/openapi.yaml](api/kart-api/openapi.yaml)). It includes promo-code validation against the three coupon base files. The work is split into two services:
 - **kart-api:** the public API for products, orders and the coupon check.
 - **coupons-server:** an internal service that works out the valid codes from about 3 GB of coupon files. Only 8 codes turn out to be valid.
 
@@ -84,9 +84,18 @@ Only the `.gz` files are used here.
 Put the three coupon files in `data/coupons/`. The `.gz` files can be copied in as they are, or unzipped to `.txt` for a faster first build (about 18 s instead of about 30 s). Use one format only: if both are there, every code counts as appearing in two files. Then start each service in its own terminal from the repository root:
 
 ```sh
-go run ./cmd/coupons-server   # first start: ready after ~18-30 s (watch /ready on :8081)
-go run ./cmd/kart-api         # http://localhost:8080
+go run ./api/coupons-server   # first start: ready after ~18-30 s (watch /ready on :8081)
+go run ./api/kart-api         # http://localhost:8080
 ```
+
+## Configuration
+
+Both services read their defaults from [.env.defaults](.env.defaults), so no setup is needed to run them locally. To change a setting, please override it rather than editing that file:
+- **Local development:** add the keys you want to change to a `.env` file in the repository root. It is gitignored.
+- **Staging or production:** point `ENV_FILE` at an env file, e.g. `ENV_FILE=deploy/staging.env`. With Docker Compose, `ENV_FILE=deploy/staging.env docker compose up -d` passes it to both services.
+- **Any single setting:** set the environment variable of the same name. It wins over every file.
+
+For the full list of settings, please refer to [ARCHITECTURE.md](ARCHITECTURE.md#configuration).
 
 ## Try it
 
@@ -115,7 +124,7 @@ go test -short ./...
 `-short` skips one test that builds the codes from the real files in `data/coupons/`. That test takes about 18 s and about 3 GB of memory:
 
 ```sh
-go test -v -run TestBaseFiles ./internal/coupons
+go test -v -run TestBaseFiles ./pkg/services/coupons
 ```
 
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) checks formatting, then runs `go vet` and `go test -race -short`, and builds both Docker images.

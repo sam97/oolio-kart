@@ -2,7 +2,7 @@
 
 Two Go services, run together with Docker Compose:
 
-- **kart-api** is the public API from [api/openapi.yaml](api/openapi.yaml). It serves products, orders and a coupon check.
+- **kart-api** is the public API from [api/kart-api/openapi.yaml](api/kart-api/openapi.yaml). It serves products, orders and a coupon check.
 - **coupons-server** is internal. It works out which promo codes are valid from the three coupon base files and answers lookups.
 
 They are separate processes because their needs are very different. Building the coupon set reads about 3 GB of text, takes 18–30 s and peaks near 3 GB of memory. The API needs a few MB and starts instantly. Keeping them apart means:
@@ -16,9 +16,9 @@ They are separate processes because their needs are very different. Building the
 - [Coupons](#coupons)
   - [The rule](#the-rule)
   - [What the data looks like](#what-the-data-looks-like)
-  - [How the valid set is built](#how-the-valid-set-is-built-internalcoupons)
-  - [How coupons are served](#how-coupons-are-served-internalcouponsservicego-internalcouponsapi)
-  - [How kart-api uses it](#how-kart-api-uses-it-internalcouponclient)
+  - [How the valid set is built](#how-the-valid-set-is-built-pkgservicescoupons)
+  - [How coupons are served](#how-coupons-are-served-pkgservicescouponsservicego-pkghandlerscouponsapi)
+  - [How kart-api uses it](#how-kart-api-uses-it-pkgdatasourcescouponclient)
   - [When things fail](#when-things-fail)
 - [Decisions](#decisions)
   - [Made for production](#made-for-production)
@@ -153,7 +153,7 @@ The three files hold 313 million lines in total, about 3.1 GB uncompressed:
 
 The code doesn't take shortcuts from this layout. For example, it doesn't just compare the eight-character tail lines. It computes the answer for any input files, so new files would still give a correct result.
 
-### How the valid set is built ([internal/coupons](internal/coupons/coupons.go))
+### How the valid set is built ([pkg/services/coupons](pkg/services/coupons/coupons.go))
 A `map[string]int` over 313 million strings would need tens of GB, so the build works on packed integers instead:
 
 1. **Read:** each file is streamed line by line, with `.gz` files decompressed on the fly. Any line that isn't 8–10 characters of `[0-9A-Za-z]` is dropped.
@@ -163,13 +163,13 @@ A `map[string]int` over 313 million strings would need tens of GB, so the build 
 
 Files are processed concurrently. Memory peaks at about 8 bytes per line (about 2.5 GB) and is returned to the OS afterwards. A build takes about 18 s from `.txt` or about 30 s from `.gz` on a 16-core machine. The tests check the merge against a simple map count on random data.
 
-### How coupons are served ([internal/coupons/service.go](internal/coupons/service.go), [internal/couponsapi](internal/couponsapi/handler.go))
+### How coupons are served ([pkg/services/coupons/service.go](pkg/services/coupons/service.go), [pkg/handlers/couponsapi](pkg/handlers/couponsapi/handler.go))
 - **Watching the folder:** coupons-server polls its folder every 2 s. It rebuilds when the contents change and have looked the same on two polls in a row, so half-copied files are never read.
 - **Rebuilds:** the old codes keep being served until the new set is ready, and a failed build keeps them too.
 - **Saved results:** after a successful build the codes are saved to `.valid-codes.json`, together with each file's name, size and modification time. A restart with unchanged files restores them in milliseconds instead of rebuilding.
 - **Lookups:** `GET /v1/coupons/:code` binary-searches the sorted codes. It answers 200 `{code, discountPercent}`, 404 for an unknown code, or 503 with `Retry-After` until the first build finishes. `/ready` reports the same state.
 
-### How kart-api uses it ([internal/couponclient](internal/couponclient))
+### How kart-api uses it ([pkg/datasources/couponclient](pkg/datasources/couponclient))
 - **Format check first:** a code that isn't 8–10 letters or digits is rejected without a network call.
 - **Caching:** valid answers are cached for 5 minutes and invalid ones for 1 minute. "Unavailable" is never cached.
 - **Exact match:** codes are case-sensitive, so `happyhrs` is invalid.
@@ -196,11 +196,11 @@ These choices would stay as they are in a real deployment.
 |---|---|
 | **Go 1.27** | The brief's suggested language. One static binary per service, cheap concurrency for the coupon build, and a strong standard library (`log/slog`, `net/http`, `slices`). |
 | **Echo v5** | Built-in middleware for request ID, structured access logs, recover, CORS, key auth and rate limiting. One central error handler renders the spec's `ApiResponse` shape, and graceful start/stop is built in. |
-| **Viper** | 12-factor configuration from environment variables, with an optional config file, defaults, and validation at startup. |
+| **Viper** | 12-factor configuration: defaults in a committed `.env.defaults`, layered override files, environment variables on top, and validation at startup. |
 | **Separate coupons service** | A build that is heavy on memory and CPU is kept apart from the request path. A coupon outage only affects orders that include a coupon. |
 | **Coupon cache, hashicorp/golang-lru with TTLs** | Repeated checks don't hit coupons-server, and recently checked codes keep working while it is down. The cache is bounded so it can't grow without limit, and invalid answers expire sooner than valid ones. |
 | **Saved coupon results** | A restart with unchanged files is ready in milliseconds instead of rebuilding for about 30 s. |
-| **Packed-integer build** | Handling 313 million lines needs about 2.5 GB, where a hash map would need tens of GB (see [Coupons](#how-the-valid-set-is-built-internalcoupons)). |
+| **Packed-integer build** | Handling 313 million lines needs about 2.5 GB, where a hash map would need tens of GB (see [Coupons](#how-the-valid-set-is-built-pkgservicescoupons)). |
 | **Money in integer cents** | No floating-point rounding errors. Floats appear only in the JSON the spec requires. |
 | **API key scopes, per-IP rate limits, trusted-proxy list** | 401 vs 403 as the spec intends. Order and coupon endpoints are protected from abuse, and `X-Forwarded-For` can't be spoofed. |
 | **Readiness, liveness, graceful shutdown** | A load balancer can stop routing traffic before in-flight requests are drained. |
@@ -249,7 +249,14 @@ The only spec changes are additions: `/coupon/validate`, plus 429 and 503 respon
 
 ## Configuration
 
-Every setting is an environment variable, and the defaults work for local development.
+Every setting is an environment variable. Defaults for both services live in [.env.defaults](.env.defaults), and they work for local development. Each layer below overrides the ones before it, and override files only need the keys they change:
+
+1. `.env.defaults`: committed, and baked into the images.
+2. `.env`: local development overrides, gitignored. Compose also reads it.
+3. The file named by `ENV_FILE`, e.g. `ENV_FILE=deploy/staging.env`, for staging or production.
+4. Environment variables.
+
+`LOG_LEVEL` and `LOG_FORMAT` are shared by both services. Every other coupons-server setting starts with `COUPONS_`.
 
 kart-api:
 
@@ -265,7 +272,6 @@ kart-api:
 | `CORS_ALLOWED_ORIGINS` | `*` | |
 | `LOG_LEVEL`, `LOG_FORMAT` | `info`, `json` | |
 | `READ_HEADER_TIMEOUT`, `READ_TIMEOUT`, `WRITE_TIMEOUT`, `IDLE_TIMEOUT`, `SHUTDOWN_TIMEOUT` | `5s`, `10s`, `15s`, `60s`, `15s` | |
-| `CONFIG_FILE` | none | Optional file with the same keys in lower case; environment variables override it |
 
 coupons-server:
 
@@ -275,28 +281,29 @@ coupons-server:
 | `COUPONS_DIR` | `data/coupons` | Keep either the `.txt` or the `.gz` files there, never both, or every code counts as appearing in two files |
 | `COUPONS_POLL_INTERVAL` | `2s` | |
 | `COUPONS_DISCOUNT_PERCENT` | `10` | |
-| `LOG_LEVEL`, `LOG_FORMAT`, `SHUTDOWN_TIMEOUT` | `info`, `json`, `10s` | |
+| `COUPONS_SHUTDOWN_TIMEOUT` | `10s` | |
 
 ## Where things are
 
 ```
-api/                    OpenAPI spec, embedded into kart-api
-cmd/kart-api/           API entry point: wiring, graceful shutdown
-cmd/coupons-server/     coupons server entry point and its config
-internal/httpapi/       Echo router, handlers, middleware, error rendering
-internal/order/         order validation, pricing, dummy order store
-internal/product/       product model, dummy catalogue
-internal/couponclient/  coupon client, cache decorator
-internal/cache/         Cache interface + in-memory LRU/TTL
-internal/money/         integer cents
-internal/config/        kart-api configuration (Viper)
-internal/logging/       slog setup; request ID on every log line
-internal/coupons/       coupon build, folder watcher, saved results
-internal/couponsapi/    coupons server HTTP handlers
-internal/healthcheck/   -healthcheck probe for container health checks
-scripts/                fetch-coupons.sh (fills the Docker volume)
-data/coupons/           coupon files for running without Docker (gitignored)
-data/seed/              optional local .gz copies for Docker (gitignored)
+api/kart-api/                  API entry point: wiring, config, graceful shutdown, embedded OpenAPI spec
+api/coupons-server/            coupons server entry point and its config
+pkg/models/                    products, orders, coupons, integer cents
+pkg/services/orders/           order validation and pricing
+pkg/services/coupons/          coupon build, folder watcher, saved results
+pkg/datasources/productstore/  product Store, dummy catalogue
+pkg/datasources/orderstore/    order Store, dummy in-memory store
+pkg/datasources/couponclient/  coupons server client, cache decorator
+pkg/datasources/cache/         Cache interface + in-memory LRU/TTL
+pkg/handlers/kartapi/          Echo router, handlers, middleware, error rendering
+pkg/handlers/couponsapi/       coupons server HTTP handlers
+pkg/helpers/config/            layered env-file configuration (Viper)
+pkg/helpers/logging/           slog setup; request ID on every log line
+pkg/helpers/healthcheck/       -healthcheck probe for container health checks
+.env.defaults                  default settings for both services
+scripts/                       fetch-coupons.sh (fills the Docker volume)
+data/coupons/                  coupon files for running without Docker (gitignored)
+data/seed/                     optional local .gz copies for Docker (gitignored)
 ```
 
 ## Future scope

@@ -1,4 +1,4 @@
-# The image only needs go.mod, go.sum, api/, cmd/ and internal/. data/ alone
+# The image only needs go.mod, go.sum, .env.defaults, api/ and pkg/. data/ alone
 # holds several GB of coupon files that must never enter the build context.
 data
 .scratch

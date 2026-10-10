@@ -20,6 +20,10 @@ services:
     depends_on:
       coupon-data:
         condition: service_completed_successfully
+    # Optional staging/production overrides: ENV_FILE=staging.env docker compose up
+    env_file:
+      - path: ${ENV_FILE:-.env.none}
+        required: false
     environment:
       COUPONS_ADDR: ":8081"
       COUPONS_DIR: /data
@@ -40,7 +44,7 @@ services:
       # The first build reads ~2 GB of gzip; later starts restore saved codes.
       start_period: 5m
       start_interval: 2s
-    # Longer than its 10s SHUTDOWN_TIMEOUT.
+    # Longer than its 10s COUPONS_SHUTDOWN_TIMEOUT.
     stop_grace_period: 15s
     read_only: true
     cap_drop: [ALL]
@@ -55,6 +59,10 @@ services:
     image: oolio-kart/kart-api
     # Deliberately no depends_on coupons-server: the API starts and serves
     # orders without coupons while the coupons server is loading or down.
+    # Optional staging/production overrides: ENV_FILE=staging.env docker compose up
+    env_file:
+      - path: ${ENV_FILE:-.env.none}
+        required: false
     environment:
       ADDR: ":8080"
       COUPONS_URL: http://coupons-server:8081
