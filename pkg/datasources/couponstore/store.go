@@ -44,14 +44,16 @@ type Manifest struct {
 	Stats  json.RawMessage // how the build went, for operators
 }
 
-// Batch collects one result. Nothing is visible to readers until Commit. A
-// Batch is used from one goroutine.
+// Batch collects one result. Nothing is visible to readers until Commit.
+// Batching the writes is the Batch's job: callers add codes one at a time, as
+// they find them.
 type Batch interface {
-	// Add records a valid code. Codes arrive in no particular order.
+	// Add records a valid code. Codes arrive in no particular order, and
+	// Add may be called from several goroutines at once.
 	Add(code string) error
 
 	// Commit replaces the published codes and manifest with this batch's,
-	// atomically.
+	// atomically. Call it once every Add has returned.
 	Commit(ctx context.Context, manifest Manifest) error
 
 	// Abort discards the batch. It is safe to call after Commit.

@@ -13,32 +13,11 @@ import (
 )
 
 // countAll counts every bucket on a pool of workers, each owning one slot of
-// codesPerSlot values for the whole phase, and adds the valid codes to out from
-// a single goroutine.
+// codesPerSlot values for the whole phase. Workers add each valid code to out
+// as they find it; out decides how to buffer and write them.
 func (b *Buckets) countAll(ctx context.Context, files [][]*bucketFile, codesPerSlot, workers int, out couponstore.Batch) (codes, oversized int, err error) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-
-	// Workers send each bucket's valid codes to found; one collector
-	// decodes them and feeds out, so the Batch needs no locking.
-	found := make(chan []uint64, workers)
-	collected := make(chan error, 1)
-	go func() {
-		var err error
-		for batch := range found { // keep draining after an error, so workers never block
-			for _, code := range batch {
-				if err != nil {
-					break
-				}
-				if err = out.Add(b.opts.Codec.Decode(code)); err != nil {
-					cancel(err)
-				} else {
-					codes++
-				}
-			}
-		}
-		collected <- err
-	}()
 
 	// Unbuffered: a bucket is handed out only when a worker is free, so the
 	// workers take buckets in turn and finish around the same time.
@@ -65,14 +44,18 @@ func (b *Buckets) countAll(ctx context.Context, files [][]*bucketFile, codesPerS
 					cancel(fmt.Errorf("bucket %d: %w", bucket, err))
 					continue
 				}
+				for _, code := range valid {
+					if err := out.Add(b.opts.Codec.Decode(code)); err != nil {
+						cancel(fmt.Errorf("add code: %w", err))
+						break
+					}
+				}
+				mu.Lock()
+				codes += len(valid)
 				if big {
-					mu.Lock()
 					oversized++
-					mu.Unlock()
 				}
-				if len(valid) > 0 {
-					found <- valid
-				}
+				mu.Unlock()
 			}
 		})
 	}
@@ -81,13 +64,8 @@ func (b *Buckets) countAll(ctx context.Context, files [][]*bucketFile, codesPerS
 	}
 	close(buckets)
 	wg.Wait()
-	close(found) // every worker is done sending; lets the collector finish
 
-	// An Add error first, otherwise a worker error or the parent's
-	// cancellation.
-	if err := <-collected; err != nil {
-		return codes, oversized, err
-	}
+	// The first worker or Add error, or the parent's cancellation.
 	return codes, oversized, context.Cause(ctx)
 }
 

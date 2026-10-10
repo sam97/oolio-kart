@@ -77,11 +77,17 @@ func (m *memoryStore) publishedCodes() []string {
 
 type memoryBatch struct {
 	store *memoryStore
+	mu    sync.Mutex
 	codes []string
 	done  bool
 }
 
-func (b *memoryBatch) Add(code string) error { b.codes = append(b.codes, code); return nil }
+func (b *memoryBatch) Add(code string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.codes = append(b.codes, code)
+	return nil
+}
 
 func (b *memoryBatch) Commit(_ context.Context, manifest couponstore.Manifest) error {
 	b.store.mu.Lock()
@@ -402,10 +408,19 @@ func TestBaseFiles(t *testing.T) {
 }
 
 // collected is a couponstore.Batch that keeps codes in memory.
-type collected struct{ codes []string }
+type collected struct {
+	mu    sync.Mutex
+	codes []string
+}
 
-func (c *collected) Add(code string) error { c.codes = append(c.codes, code); return nil }
-func (c *collected) Abort()                {}
+func (c *collected) Add(code string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.codes = append(c.codes, code)
+	return nil
+}
+
+func (c *collected) Abort() {}
 
 func (c *collected) Commit(context.Context, couponstore.Manifest) error { return nil }
 

@@ -188,3 +188,36 @@ func TestPostgresSettings(t *testing.T) {
 		}
 	}
 }
+
+// TestPostgresConcurrentAdd adds from several goroutines at once, across
+// several flushes, as the scanner's count workers do.
+func TestPostgresConcurrentAdd(t *testing.T) {
+	pool := postgrestest.New(t)
+	store := postgres.NewCoupons(pool)
+	batch, err := store.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer batch.Abort()
+
+	const workers, each = 8, 2000
+	var wg sync.WaitGroup
+	for worker := range workers {
+		wg.Go(func() {
+			for i := range each {
+				if err := batch.Add(fmt.Sprintf("W%dC%05d", worker, i)); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	if err := batch.Commit(t.Context(), manifestFor("rules", "a.gz")); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM coupon_codes").Scan(&count); err != nil || count != workers*each {
+		t.Errorf("published %d codes, %v; want %d", count, err, workers*each)
+	}
+}

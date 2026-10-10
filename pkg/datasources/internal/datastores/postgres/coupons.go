@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -42,13 +43,19 @@ func (c *Coupons) Begin(ctx context.Context) (couponstore.Batch, error) {
 	return &couponBatch{ctx: ctx, tx: tx}, nil
 }
 
+// couponBatch buffers codes and copies them into the transaction flushSize at
+// a time. mu serialises Adds, since a pgx.Tx is not safe for concurrent use.
 type couponBatch struct {
-	ctx     context.Context // Begin's, since Add takes none
-	tx      pgx.Tx
+	ctx context.Context // Begin's, since Add takes none
+	tx  pgx.Tx
+
+	mu      sync.Mutex
 	pending [][]any
 }
 
 func (b *couponBatch) Add(code string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.pending = append(b.pending, []any{code})
 	if len(b.pending) < flushSize {
 		return nil
@@ -66,6 +73,8 @@ func (b *couponBatch) flush(ctx context.Context) error {
 }
 
 func (b *couponBatch) Commit(ctx context.Context, manifest couponstore.Manifest) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if err := b.flush(ctx); err != nil {
 		return err
 	}

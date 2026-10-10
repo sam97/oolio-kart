@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,10 +62,19 @@ func (r memReader) Read(ctx context.Context, sources []couponsource.Source, out 
 }
 
 // collected is a couponstore.Batch that keeps codes in memory.
-type collected struct{ codes []string }
+type collected struct {
+	mu    sync.Mutex
+	codes []string
+}
 
-func (c *collected) Add(code string) error { c.codes = append(c.codes, code); return nil }
-func (c *collected) Abort()                {}
+func (c *collected) Add(code string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.codes = append(c.codes, code)
+	return nil
+}
+
+func (c *collected) Abort() {}
 
 func (c *collected) Commit(context.Context, couponstore.Manifest) error { return nil }
 
