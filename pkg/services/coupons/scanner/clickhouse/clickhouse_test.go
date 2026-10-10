@@ -13,6 +13,7 @@ import (
 	ch "github.com/ClickHouse/clickhouse-go/v2"
 
 	"github.com/sam97/oolio-kart/pkg/datasources/couponsource"
+	"github.com/sam97/oolio-kart/pkg/datasources/couponstore"
 	"github.com/sam97/oolio-kart/pkg/models"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner/scannertest"
 )
@@ -149,6 +150,31 @@ func TestScanServer(t *testing.T) {
 				})
 			}
 		}
+	})
+
+	t.Run("suite", func(t *testing.T) {
+		scannertest.Run(t, func(t *testing.T, minFiles int, sources []couponsource.Source, out couponstore.Batch) error {
+			sub := strings.NewReplacer("/", "_", " ", "_", ",", "_").Replace(t.Name())
+			dir := filepath.Join(localDir, sub)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.RemoveAll(dir) })
+			for _, source := range sources {
+				file := source.(scannertest.File)
+				if err := os.WriteFile(filepath.Join(dir, file.Name), []byte(file.Data), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rules := settings
+			rules.MinFiles = minFiles
+			scanner, err := New(Options{Conn: conn, Dir: serverDir + "/" + sub, Settings: rules})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = scanner.Scan(t.Context(), nil, sources, out)
+			return err
+		})
 	})
 
 	t.Run("repeated within a file", func(t *testing.T) {

@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -13,7 +14,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sam97/oolio-kart/pkg/datasources"
 	"github.com/sam97/oolio-kart/pkg/datasources/couponsource"
+	"github.com/sam97/oolio-kart/pkg/datasources/couponstore"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/codec"
 	"github.com/sam97/oolio-kart/pkg/services/coupons/scanner/scannertest"
 )
@@ -21,29 +24,6 @@ import (
 // memSource is a source held in memory.
 func memSource(name, data string) scannertest.File {
 	return scannertest.File{Name: name, Data: data}
-}
-
-// memReader sends each scannertest.File in chunks of a few lines, so chunks from
-// different sources interleave.
-type memReader struct{ sources []couponsource.Source }
-
-func (r memReader) List(ctx context.Context) ([]couponsource.Source, error) { return r.sources, nil }
-func (r memReader) ChunkSize(sources int) int                               { return 64 << 10 }
-
-func (r memReader) Read(ctx context.Context, sources []couponsource.Source, out chan<- couponsource.Chunk) error {
-	for i, source := range sources {
-		lines := strings.SplitAfter(source.(scannertest.File).Data, "\n")
-		for len(lines) > 0 {
-			n := min(len(lines), 7)
-			select {
-			case out <- couponsource.Chunk{Source: i, Lines: []byte(strings.Join(lines[:n], ""))}:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-			lines = lines[n:]
-		}
-	}
-	return nil
 }
 
 var defaultBudget = Budget{Encoders: 4 << 20, Buckets: 4 << 20, Count: 16 << 20}
@@ -64,7 +44,7 @@ func newScanner(t *testing.T, minFiles int, budget Budget) *Buckets {
 func scan(t *testing.T, b *Buckets, sources ...couponsource.Source) ([]string, Stats) {
 	t.Helper()
 	var out scannertest.Collected
-	stats, err := b.Scan(t.Context(), memReader{sources}, sources, &out)
+	stats, err := b.Scan(t.Context(), scannertest.Reader{Sources: sources}, sources, &out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,8 +199,84 @@ func TestScanCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	sources := []couponsource.Source{memSource("a", "HAPPYHRS\n"), memSource("b", "HAPPYHRS\n")}
-	if _, err := b.Scan(ctx, memReader{sources}, sources, &scannertest.Collected{}); !errors.Is(err, context.Canceled) {
+	if _, err := b.Scan(ctx, scannertest.Reader{Sources: sources}, sources, &scannertest.Collected{}); !errors.Is(err, context.Canceled) {
 		t.Errorf("Scan = %v, want context.Canceled", err)
+	}
+}
+
+// TestSuite runs the shared edge and stress cases with an ample budget, with
+// a budget so small that most buckets are sorted on disk, and reading real
+// files, plain and gzipped, through the default file reader.
+func TestSuite(t *testing.T) {
+	budgets := map[string]Budget{
+		"ample":     defaultBudget,
+		"oversized": {Encoders: 1, Buckets: 1, Count: 8 << 10},
+	}
+	for name, budget := range budgets {
+		t.Run(name, func(t *testing.T) {
+			scannertest.Run(t, func(t *testing.T, minFiles int, sources []couponsource.Source, out couponstore.Batch) error {
+				b := newScanner(t, minFiles, budget)
+				stats, err := b.Scan(t.Context(), scannertest.Reader{Sources: sources}, sources, out)
+				checkOpenFiles(t, stats, len(sources))
+				return err
+			})
+		})
+	}
+
+	for _, gzipped := range []bool{false, true} {
+		t.Run(fmt.Sprintf("files gzip=%v", gzipped), func(t *testing.T) {
+			scannertest.Run(t, func(t *testing.T, minFiles int, sources []couponsource.Source, out couponstore.Batch) error {
+				dir := t.TempDir()
+				for _, source := range sources {
+					writeSource(t, dir, source.(scannertest.File), gzipped)
+				}
+				reader := datasources.CouponFiles(dir)(4 << 20)
+				listed, err := reader.List(t.Context())
+				if err != nil {
+					return err
+				}
+				if len(listed) != len(sources) {
+					t.Fatalf("listed %d files, wrote %d", len(listed), len(sources))
+				}
+				b := newScanner(t, minFiles, defaultBudget)
+				stats, err := b.Scan(t.Context(), reader, listed, out)
+				checkOpenFiles(t, stats, len(listed))
+				return err
+			})
+		})
+	}
+}
+
+// checkOpenFiles checks that the bucket files open at once stay within
+// maxBucketFiles; with more sources than that, one bucket each.
+func checkOpenFiles(t *testing.T, stats Stats, sources int) {
+	t.Helper()
+	if sources > 0 && stats.Buckets*sources > max(maxBucketFiles, sources) {
+		t.Errorf("%d buckets × %d sources is over the %d open files allowed", stats.Buckets, sources, maxBucketFiles)
+	}
+}
+
+// writeSource writes file into dir, gzipped with a .gz suffix if asked.
+func writeSource(t *testing.T, dir string, file scannertest.File, gzipped bool) {
+	t.Helper()
+	path := filepath.Join(dir, file.Name)
+	if !gzipped {
+		if err := os.WriteFile(path, []byte(file.Data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	out, err := os.Create(path + ".gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	writer := gzip.NewWriter(out)
+	if _, err := io.WriteString(writer, file.Data); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

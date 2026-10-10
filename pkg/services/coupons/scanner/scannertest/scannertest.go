@@ -35,6 +35,35 @@ type nopCloser struct{ io.ReadSeeker }
 
 func (nopCloser) Close() error { return nil }
 
+// Reader is a couponsource.Reader of Files. It sends each in chunks of a few
+// lines, so chunks from different sources interleave. Files over 1 MiB go in
+// bigger chunks, to keep stress tests quick.
+type Reader struct{ Sources []couponsource.Source }
+
+func (r Reader) List(ctx context.Context) ([]couponsource.Source, error) { return r.Sources, nil }
+func (r Reader) ChunkSize(sources int) int                               { return 64 << 10 }
+
+func (r Reader) Read(ctx context.Context, sources []couponsource.Source, out chan<- couponsource.Chunk) error {
+	for i, source := range sources {
+		data := source.(File).Data
+		perChunk := 7
+		if len(data) > 1<<20 {
+			perChunk = 8192
+		}
+		lines := strings.SplitAfter(data, "\n")
+		for len(lines) > 0 {
+			n := min(len(lines), perChunk)
+			select {
+			case out <- couponsource.Chunk{Source: i, Lines: []byte(strings.Join(lines[:n], ""))}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			lines = lines[n:]
+		}
+	}
+	return nil
+}
+
 // Collected is a couponstore.Batch that keeps codes in memory.
 type Collected struct {
 	mu    sync.Mutex
